@@ -1,0 +1,145 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      - "*"
+  # The same build, run by hand from the Actions tab. By default it only
+  # produces the zip and the three loose files as downloadable artifacts;
+  # tick "publish" to have it create the tag and the GitHub release too, for
+  # when tagging from a local clone is not an option.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create the tag and GitHub release (version comes from manifest.json)"
+        type: boolean
+        default: false
+      target:
+        description: "Commit-ish to build and tag (default: the branch this run was started from)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          # A tag push builds the tag. A manual run builds the ref it was
+          # started from, or an explicit target when one is given.
+          ref: ${{ inputs.target || github.ref }}
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - name: Show runtime versions
+        run: |
+          node --version
+          npm --version
+
+      # A release whose tag disagrees with the manifest is one Obsidian will
+      # refuse to update to, so the metadata is checked before anything is
+      # built. On a tag push the tag is the expected value; on a manual
+      # publish the manifest is, and every other file must agree with it.
+      - name: Validate release versions
+        id: version
+        if: github.ref_type == 'tag' || inputs.publish
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const manifest = require('./manifest.json');
+          const pkg = require('./package.json');
+          const lock = require('./package-lock.json');
+          const versions = require('./versions.json');
+          const expected = process.env.RELEASE_TAG || manifest.version;
+          const values = {
+            manifest: manifest.version,
+            package: pkg.version,
+            packageLock: lock.version,
+            packageLockRoot: lock.packages?.['']?.version,
+          };
+          if (process.env.RELEASE_TAG) values.tag = process.env.RELEASE_TAG;
+          console.error(JSON.stringify(values, null, 2));
+          for (const [name, value] of Object.entries(values)) {
+            if (value !== expected) throw new Error(`${name} is ${value}; expected ${expected}`);
+          }
+          if (versions[expected] !== manifest.minAppVersion) {
+            throw new Error(`versions.json is missing ${expected}: ${manifest.minAppVersion}`);
+          }
+          console.error(`Release metadata is consistent for ${expected}`);
+          console.log(`version=${expected}`);
+          NODE
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Verify release assets
+        run: |
+          test -s main.js
+          test -s manifest.json
+          test -s styles.css
+
+      # Two shapes of the same build: the three loose files Obsidian's community
+      # installer reads, and a zip for anyone installing by hand into
+      # .obsidian/plugins/. The zip holds the files at its root so it can be
+      # unpacked straight into the plugin folder.
+      - name: Package plugin zip
+        id: package
+        run: |
+          PLUGIN_ID=$(node -p "require('./manifest.json').id")
+          VERSION=$(node -p "require('./manifest.json').version")
+          ZIP="${PLUGIN_ID}-${VERSION}.zip"
+          zip -j "$ZIP" main.js manifest.json styles.css
+          unzip -l "$ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-build
+          path: |
+            ${{ steps.package.outputs.zip }}
+            main.js
+            manifest.json
+            styles.css
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # The tag already exists and was pushed deliberately.
+            gh release create "$VERSION" \
+              --verify-tag \
+              --title "$VERSION" \
+              --generate-notes \
+              main.js manifest.json styles.css "$ZIP"
+          else
+            # Manual publish: create the tag at the commit that was just built.
+            # gh refuses if the release already exists, which is the guard
+            # against publishing the same version twice.
+            gh release create "$VERSION" \
+              --target "$(git rev-parse HEAD)" \
+              --title "$VERSION" \
+              --generate-notes \
+              main.js manifest.json styles.css "$ZIP"
+          fi
+          echo "Released $VERSION at $(git rev-parse HEAD)"
