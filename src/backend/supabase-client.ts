@@ -6,7 +6,7 @@
 // folder would cause.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createClient, processLock, Session, SupabaseClient, SupportedStorage } from '@supabase/supabase-js';
+import { createClient, Session, SupabaseClient, SupportedStorage } from '@supabase/supabase-js';
 
 /** Accepts a full project URL or a bare project ref, and drops trailing slashes. */
 export function normalizeProjectUrl(input: string): string {
@@ -59,8 +59,6 @@ export class SupabaseConnection {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
-        // navigator.locks has been seen to time out inside mobile web views.
-        lock: processLock,
       },
     });
   }

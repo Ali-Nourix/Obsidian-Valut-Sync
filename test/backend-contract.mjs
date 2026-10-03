@@ -9,15 +9,13 @@
  * The live run also syncs two simulated devices through the project and
  * removes the test vault and its blobs afterwards.
  */
-import { checker, loadTs } from './harness/load.mjs';
+import { checker } from './harness/load.mjs';
 import { lib, device, settle, assertConverged } from './harness/world.mjs';
 
 const { eq, ok, count } = checker();
 const { MemoryBackend, BackendError, PlainCodec, Clock } = lib;
-const live = await loadTs(`
-  export { SupabaseBackend, BUCKET, toBackendError } from "./src/backend/supabase-backend";
-  export { SupabaseConnection, normalizeProjectUrl, keyProblem } from "./src/backend/supabase-client";
-`);
+// One bundle for engine and backends, so error classes match across them.
+const live = lib;
 
 const H = (c) => c.repeat(64);
 
@@ -65,7 +63,7 @@ async function contract(backend, label, { graceMs = 0, collect = (vaultId) => ba
     await backend.getBlob(vault.id, H('d'));
     throw new Error('missing blob did not throw');
   } catch (error) {
-    eq(error instanceof BackendError ? error.kind : String(error), 'blob-missing', `${label}: a missing blob is reported as such`);
+    eq(error?.kind ?? String(error), 'blob-missing', `${label}: a missing blob is reported as such`);
   }
 
   for (let i = 0; i < 20 && !heads.some(([h]) => h === 4); i++) await new Promise((r) => setTimeout(r, 250));
@@ -100,7 +98,7 @@ async function contract(backend, label, { graceMs = 0, collect = (vaultId) => ba
       await backend.getBlob(vault.id, id);
       throw new Error(`${label}: blob ${id.slice(0, 4)} survived`);
     } catch (error) {
-      eq(error instanceof BackendError ? error.kind : String(error), 'blob-missing', `${label}: blob ${id.slice(0, 4)} is gone`);
+      eq(error?.kind ?? String(error), 'blob-missing', `${label}: blob ${id.slice(0, 4)} is gone`);
     }
   }
   return vault;
@@ -158,7 +156,7 @@ if (!env.VAULT_SYNC_SUPABASE_URL || !env.VAULT_SYNC_SUPABASE_KEY || !env.VAULT_S
     A.write('Daily/روزانه.md', '# امروز\n- A\n');
     B.write('Daily/روزانه.md', '# امروز\n- B\n');
     await settle([A, B]);
-    eq(A.read('Daily/روزانه.md'), '# امروز\n- A\n- B\n', 'live: concurrent appends merged');
+    eq(A.read('Daily/روزانه.md'), '# امروز\n- B\n- A\n', 'live: concurrent appends merged (the merging device, B, first)');
     const rows = (await one.backend.pull(vault.id, 0, 1000)).filter((r) => !r.deleted).map((r) => r.path).sort();
     eq(rows, ['Daily/روزانه.md', 'img.bin'], 'live: the index lists the synced files');
     console.log('live: waiting out the garbage grace period…');

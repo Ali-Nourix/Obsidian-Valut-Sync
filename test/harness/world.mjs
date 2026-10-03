@@ -19,6 +19,8 @@ export const lib = await loadTs(`
   export { MemoryBaseStore } from "./src/core/base-store";
   export { PathCipher } from "./src/core/path-cipher";
   export { EncryptedPathBackend } from "./src/backend/encrypted-paths";
+  export { SupabaseBackend, BUCKET, toBackendError } from "./src/backend/supabase-backend";
+  export { SupabaseConnection, normalizeProjectUrl, keyProblem } from "./src/backend/supabase-client";
 `);
 
 const { SyncEngine, MemoryBackend, MemoryVaultHost, Clock, PlainCodec, EncryptedCodec, createEncryption, utf8, decodeUtf8, DEFAULT_SYNC_OPTIONS, nfc, SyncLog, MemoryBaseStore, PathCipher, EncryptedPathBackend } = lib;

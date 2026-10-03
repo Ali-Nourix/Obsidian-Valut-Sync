@@ -158,6 +158,8 @@ export class SupabaseBackend implements RemoteBackend {
     const body = new Blob([toArrayBuffer(bytes)], { type: 'application/octet-stream' });
     const { error } = await this.client.storage.from(BUCKET).upload(this.objectKey(vaultId, id), body, {
       contentType: 'application/octet-stream',
+      // Blobs are only in transit: no CDN copy may outlive their deletion.
+      cacheControl: '0',
       upsert: false,
     });
     if (!error) return;
@@ -168,7 +170,9 @@ export class SupabaseBackend implements RemoteBackend {
   }
 
   async getBlob(vaultId: string, id: string): Promise<Uint8Array> {
-    const { data, error } = await this.client.storage.from(BUCKET).download(this.objectKey(vaultId, id));
+    // A fresh nonce keeps the CDN from answering with a copy of a blob that has since been deleted.
+    const cacheNonce = Math.random().toString(36).slice(2);
+    const { data, error } = await this.client.storage.from(BUCKET).download(this.objectKey(vaultId, id), { cacheNonce }, { cache: 'no-store' });
     if (error || !data) throw toBackendError(error ?? new Error('Empty download'));
     return new Uint8Array(await data.arrayBuffer());
   }
