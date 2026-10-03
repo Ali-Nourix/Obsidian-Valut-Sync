@@ -75,8 +75,8 @@ export interface EngineDeps {
   concurrency?: number;
   /** Local merge bases; kept in memory when not given. */
   baseStore?: BaseStore;
-  /** How often to collect blobs nobody needs (default 5 minutes). */
-  gcIntervalMs?: number;
+  /** How long after a delivery to collect blobs nobody needs; the server's grace period is 10 minutes. */
+  gcDelayMs?: number;
 }
 
 export type CycleStatus = 'synced' | 'needs-confirmation' | 'error';
@@ -166,6 +166,8 @@ interface Cycle {
   peers: number;
   /** Blobs owed to this device when the cycle started. */
   owed: BlobRef[];
+  /** Content ids other devices asked for when the cycle started. */
+  requested: string[];
   /** Blobs this device needed but did not find on the server, by path. */
   missing: Map<string, BlobRef>;
   /** Content ids uploaded this cycle. */
@@ -176,7 +178,10 @@ interface Cycle {
 
 const MAX_ROUNDS = 4;
 const OWN_WRITE_MS = 3000;
-const GC_INTERVAL_MS = 5 * 60_000;
+/** Wait this long after a delivery before collecting: the server never collects blobs younger than its grace period (10 minutes). */
+const GC_DELAY_MS = 11 * 60_000;
+const GC_SAFETY_MS = 6 * 3600_000;
+const PRUNE_MS = 24 * 3600_000;
 
 export class SyncEngine {
   private state: SyncState | null = null;
@@ -189,10 +194,14 @@ export class SyncEngine {
   private pending: DeleteSummary | null = null;
   private readonly recentWrites = new Map<string, number>();
   private readonly baseStore: BaseStore;
-  private lastGc = -Infinity;
   private emptyId: string | null = null;
   private lastSave = 0;
   private unsaved = 0;
+  /** The state as last written, so a save of an unchanged state touches no file. */
+  private lastSaved: string | null = null;
+  /** When the next garbage collection is due; null when nothing was delivered lately. */
+  private gcDueAt: number | null = null;
+  private lastGc = -Infinity;
   private saving: Promise<void> = Promise.resolve();
 
   private readonly now: () => number;
@@ -285,6 +294,7 @@ export class SyncEngine {
   async reset(): Promise<void> {
     await this.deps.store.clear();
     this.state = null;
+    this.lastSaved = null;
     this.pending = null;
     this.deleteEvents.clear();
   }
@@ -316,8 +326,11 @@ export class SyncEngine {
   private async loadState(): Promise<SyncState> {
     if (this.state) return this.state;
     const { vaultId, userId, nonce } = this.deps;
-    const { state, discarded } = SyncState.restore(await this.deps.store.load(), { vaultId, userId, nonce }, this.keyOf);
+    const saved = await this.deps.store.load();
+    const { state, discarded } = SyncState.restore(saved, { vaultId, userId, nonce }, this.keyOf);
     if (discarded) this.log.add('info', undefined, 'Saved sync state belonged to another device or vault; starting fresh');
+    // What was loaded is what is on disk: only a later change is worth writing.
+    this.lastSaved = saved && !discarded ? JSON.stringify(state.toJSON()) : null;
     this.state = state;
     return state;
   }
@@ -327,15 +340,25 @@ export class SyncEngine {
     const snapshot = state.toJSON();
     this.lastSave = this.now();
     this.unsaved = 0;
-    const write = this.saving.then(() => this.deps.store.save(snapshot));
+    // A device that has nothing new to remember must not rewrite its state file:
+    // on a large vault that file is megabytes, and quiet syncs are the common case.
+    const json = JSON.stringify(snapshot);
+    if (json === this.lastSaved) return this.saving;
+    const write = this.saving.then(async () => {
+      await this.deps.store.save(snapshot);
+      this.lastSaved = json;
+    });
     this.saving = write.catch(() => undefined);
     return write;
   }
 
-  /** Saves during long phases, so a crash loses little work. */
+  /**
+   * Saves during long phases, so a crash loses little work. Losing a little is
+   * harmless (the next cycle adopts what was already done), so this is sparse.
+   */
   private async checkpoint(state: SyncState): Promise<void> {
     this.unsaved++;
-    if (this.unsaved >= 50 || this.now() - this.lastSave >= 2000) await this.save(state);
+    if (this.unsaved >= 200 || this.now() - this.lastSave >= 15_000) await this.save(state);
   }
 
   private async emptyBlobId(): Promise<string> {
@@ -366,11 +389,13 @@ export class SyncEngine {
       } catch {
         // An editor that cannot save right now is picked up by the next cycle.
       }
+      // The one server call a quiet sync makes: head, peers, what is owed, what is asked for.
       const checkIn = await this.deps.backend.registerDevice(this.deps.vaultId, this.deps.deviceId);
-      await this.pull(state);
+      await this.pull(state, checkIn.headSeq);
       const cycle = await this.prepare(state, report);
       cycle.peers = checkIn.peers;
       cycle.owed = checkIn.deliveries;
+      cycle.requested = checkIn.requests;
       await this.execute(cycle);
       for (const key of this.deleteEvents) if (!state.base.has(key)) this.deleteEvents.delete(key);
       await this.save(state);
@@ -390,16 +415,14 @@ export class SyncEngine {
     }
   }
 
-  private async pull(state: SyncState): Promise<void> {
+  private async pull(state: SyncState, headSeq: number): Promise<void> {
     const { backend, vaultId } = this.deps;
-    const vault = await backend.getVault(vaultId);
-    if (!vault) throw new BackendError('vault-missing', 'The remote vault no longer exists');
-    if (vault.headSeq < state.cursor) {
+    if (headSeq < state.cursor) {
       // The server's history is shorter than what this device saw: start the mirror over.
       state.remote.clear();
       state.cursor = 0;
     }
-    if (vault.headSeq === state.cursor) return;
+    if (headSeq === state.cursor) return;
     for (;;) {
       const rows = await backend.pull(vaultId, state.cursor, PULL_PAGE);
       for (const row of rows) state.applyRow(row);
@@ -411,7 +434,6 @@ export class SyncEngine {
       this.log.add('info', undefined, 'The remote vault is empty; this device will upload its files again');
       state.base.clear();
     }
-    await this.save(state);
   }
 
   /** Scan, plan, and hold back deletions that need the user's approval. */
@@ -518,6 +540,7 @@ export class SyncEngine {
       rerun: false,
       peers: 0,
       owed: [],
+      requested: [],
       missing: new Map(),
       uploaded: new Set(),
       renamedIds: new Set(),
@@ -538,7 +561,6 @@ export class SyncEngine {
     }
     for (const a of of('refresh')) state.setBase({ ...a.base, mtime: a.local.mtime, size: a.local.size });
     for (const a of of('drop')) state.dropBase(a.base.path);
-    await this.save(state);
 
     // 2. Server → device.
     for (const a of of('rename')) await this.perFile(cycle, a.remote.path, () => this.renameLocal(cycle, a));
@@ -587,8 +609,13 @@ export class SyncEngine {
       cycle.report.waiting = cycle.missing.size;
       this.log.add('info', undefined, `Asked the other devices for ${cycle.missing.size} files that are no longer on the server`);
     }
-    await this.acknowledge(cycle);
-    await this.collectGarbage(state);
+    const acknowledged = await this.acknowledge(cycle);
+    await this.collectGarbage(state, cycle.report, acknowledged > 0 || cycle.uploaded.size > 0 || cycle.report.served > 0);
+  }
+
+  /** Stores a merge base unless this content is already kept: a base is written once, never rewritten. */
+  private async ensureBase(id: string, bytes: Uint8Array): Promise<void> {
+    if (!(await this.baseStore.has(id))) await this.baseStore.put(id, bytes);
   }
 
   /**
@@ -596,7 +623,7 @@ export class SyncEngine {
    * function so the content is only read when it is actually needed.
    */
   private async keepBase(id: string, bytes: () => Promise<Uint8Array>): Promise<void> {
-    if (await this.baseStore.get(id)) return;
+    if (await this.baseStore.has(id)) return;
     try {
       const content = await bytes();
       if ((await this.deps.codec.id(content)) === id) await this.baseStore.put(id, content);
@@ -622,7 +649,7 @@ export class SyncEngine {
   /** Uploads content other devices asked for, if this device holds it. */
   private async serveRequests(cycle: Cycle): Promise<void> {
     const { backend, codec, vaultId, deviceId } = this.deps;
-    const wanted = await backend.openRequests(vaultId, deviceId);
+    const wanted = cycle.requested;
     if (!wanted.length) return;
     const holders = new Map<string, string>();
     for (const base of cycle.state.base.values()) if (!holders.has(base.hash)) holders.set(base.hash, base.path);
@@ -655,7 +682,7 @@ export class SyncEngine {
    * them, the path moved on, or the file is outside what this device syncs.
    * Once nobody is owed a blob, it is garbage.
    */
-  private async acknowledge(cycle: Cycle): Promise<void> {
+  private async acknowledge(cycle: Cycle): Promise<number> {
     const { state } = cycle;
     const opts = this.options();
     const limit = opts.maxFileSize - this.deps.codec.overhead;
@@ -667,22 +694,41 @@ export class SyncEngine {
       return !inScope(owed.path, opts.excludedFolders, this.deps.host.caseInsensitive) || row.size > limit;
     });
     if (settled.length) await this.deps.backend.ackReceived(this.deps.vaultId, this.deps.deviceId, settled.map(({ path, hash }) => ({ path, hash })));
+    return settled.length;
   }
 
   /** Every few minutes: delete blobs nobody needs, and merge bases no file uses. */
-  private async collectGarbage(state: SyncState): Promise<void> {
+  /**
+   * Deletes blobs nobody needs any more. This is not polled: it runs once,
+   * shortly after this device uploaded, served or received something (after
+   * the server's grace period, so the blobs are old enough to collect), and
+   * as a safety net every few hours for leftovers of a crashed device. Merge
+   * bases no file uses are pruned once a day; that walks the base folder.
+   */
+  private async collectGarbage(state: SyncState, report: CycleReport, busy: boolean): Promise<void> {
     const now = this.now();
-    if (now - this.lastGc < (this.deps.gcIntervalMs ?? GC_INTERVAL_MS)) return;
-    this.lastGc = now;
-    try {
-      const removed = await this.deps.backend.collectGarbage(this.deps.vaultId);
-      if (removed) this.log.add('info', undefined, `Removed ${removed} delivered files from the server`);
-    } catch (error) {
-      if (error instanceof BackendError && !error.transient) throw error;
+    if (busy) this.gcDueAt = now + (this.deps.gcDelayMs ?? GC_DELAY_MS);
+    const due = (this.gcDueAt !== null && now >= this.gcDueAt) || now - this.lastGc >= GC_SAFETY_MS;
+    if (due) {
+      this.gcDueAt = null;
+      this.lastGc = now;
+      try {
+        const removed = await this.deps.backend.collectGarbage(this.deps.vaultId);
+        if (removed) this.log.add('info', undefined, `Removed ${removed} delivered files from the server`);
+      } catch (error) {
+        if (error instanceof BackendError && !error.transient) throw error;
+      }
     }
-    const keep = new Set<string>();
-    for (const base of state.base.values()) if (isMergeable(base.path)) keep.add(base.hash);
-    await this.baseStore.prune(keep);
+    if (this.gcDueAt !== null) report.followUpMs = Math.min(report.followUpMs ?? Infinity, Math.max(0, this.gcDueAt - now) + 1000);
+
+    if (state.prunedAt === 0) {
+      state.prunedAt = now;
+    } else if (now - state.prunedAt >= PRUNE_MS) {
+      const keep = new Set<string>();
+      for (const base of state.base.values()) if (isMergeable(base.path)) keep.add(base.hash);
+      await this.baseStore.prune(keep);
+      state.prunedAt = now;
+    }
   }
 
   /**
@@ -724,7 +770,7 @@ export class SyncEngine {
   private async download(cycle: Cycle, a: Extract<Action, { kind: 'download' }>): Promise<void> {
     const bytes = await this.fetchOrRequest(cycle, a.remote);
     if (!bytes) return;
-    if (isMergeable(a.remote.path)) await this.baseStore.put(a.remote.hash, bytes);
+    if (isMergeable(a.remote.path)) await this.ensureBase(a.remote.hash, bytes);
     const target = a.local ? a.local.path : a.remote.path;
     const expect = a.local ? { mtime: a.local.mtime, size: a.local.size } : null;
     const result = await this.deps.host.write(target, bytes, expect, a.remote.mtime);
@@ -771,7 +817,7 @@ export class SyncEngine {
         return;
       }
       this.markWrite(a.local.path);
-      await this.baseStore.put(a.remote.hash, remoteBytes);
+      await this.ensureBase(a.remote.hash, remoteBytes);
       cycle.state.setBase({ path: a.remote.path, hash: a.remote.hash, version: a.remote.version, ...result });
     } else {
       if (outcome.text !== localText) {
@@ -820,7 +866,7 @@ export class SyncEngine {
 
     const copyPath = nfc(copy);
     const synced = state.base.get(this.keyOf(copy));
-    if (isMergeable(copyPath)) await this.baseStore.put(a.remote.hash, remoteBytes);
+    if (isMergeable(copyPath)) await this.ensureBase(a.remote.hash, remoteBytes);
     if (!synced || synced.hash !== a.remote.hash) cycle.commits.push({
       // The copy holds the other device's version, which that device already has and
       // which any third device is still owed on the server: nothing to upload.
@@ -854,7 +900,7 @@ export class SyncEngine {
       }
       cycle.uploaded.add(id);
     }
-    if (isMergeable(a.remotePath)) await this.baseStore.put(id, bytes);
+    if (isMergeable(a.remotePath)) await this.ensureBase(id, bytes);
     cycle.commits.push({
       change: { path: a.remotePath, hash: id, size: bytes.length, mtime: before.mtime, deleted: false, expectedVersion: a.expected },
       onOk: (row) => {
@@ -887,7 +933,7 @@ export class SyncEngine {
           this.log.add('info', pending.change.path, 'Changed on another device at the same time; syncing again');
         }
       });
-      await this.save(state);
+      await this.checkpoint(state);
     }
   }
 }

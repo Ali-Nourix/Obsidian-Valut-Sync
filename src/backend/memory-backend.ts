@@ -15,7 +15,7 @@ import { BackendError, BlobRef, CheckIn, CommitChange, CommitResult, RemoteBacke
 interface StoredVault {
   vault: RemoteVault;
   files: Map<string, RemoteRow>;
-  /** Device id → when it last checked in. */
+  /** Device id → when it last checked in (refreshed at most hourly, like the server). */
   devices: Map<string, number>;
   /** Device id → path → content id still owed to it. */
   deliveries: Map<string, Map<string, string>>;
@@ -29,12 +29,14 @@ export interface MemoryBackendOptions {
   garbageGraceMs?: number;
   /** Devices unseen this long are forgotten. */
   staleDeviceMs?: number;
+  /** A device's check-in time is refreshed at most this often. */
+  heartbeatMs?: number;
 }
 
 export class MemoryBackend implements RemoteBackend {
   readonly vaults = new Map<string, StoredVault>();
   readonly blobs = new Map<string, { bytes: Uint8Array; at: number }>();
-  readonly calls = { pull: 0, commit: 0, putBlob: 0, getBlob: 0, garbage: 0 };
+  readonly calls = { total: 0, pull: 0, commit: 0, putBlob: 0, getBlob: 0, garbage: 0, checkIn: 0 };
   /** Every call fails as if the network were down. */
   offline = false;
   /** Runs before each commit is applied; a test can commit from "another device" here. */
@@ -47,14 +49,17 @@ export class MemoryBackend implements RemoteBackend {
   private readonly now: () => number;
   private readonly garbageGraceMs: number;
   private readonly staleDeviceMs: number;
+  private readonly heartbeatMs: number;
 
   constructor(options: MemoryBackendOptions = {}) {
     this.now = options.now ?? Date.now;
     this.garbageGraceMs = options.garbageGraceMs ?? 10 * 60_000;
     this.staleDeviceMs = options.staleDeviceMs ?? 30 * 24 * 3600_000;
+    this.heartbeatMs = options.heartbeatMs ?? 3600_000;
   }
 
   private enter(op: string): void {
+    this.calls.total++;
     if (this.offline) throw new BackendError('network', 'Offline');
     this.onCall?.(op);
   }
@@ -183,19 +188,27 @@ export class MemoryBackend implements RemoteBackend {
 
   async registerDevice(vaultId: string, deviceId: string): Promise<CheckIn> {
     this.enter('registerDevice');
+    this.calls.checkIn++;
     const stored = this.stored(vaultId);
     const now = this.now();
-    stored.devices.set(deviceId, now);
-    for (const [device, seen] of stored.devices) {
-      if (now - seen <= this.staleDeviceMs) continue;
-      stored.devices.delete(device);
-      stored.deliveries.delete(device);
-      stored.requests.delete(device);
+    const seen = stored.devices.get(deviceId);
+    if (seen === undefined || now - seen > this.heartbeatMs) {
+      stored.devices.set(deviceId, now);
+      for (const [device, last] of stored.devices) {
+        if (now - last <= this.staleDeviceMs) continue;
+        stored.devices.delete(device);
+        stored.deliveries.delete(device);
+        stored.requests.delete(device);
+      }
     }
     const owed = stored.deliveries.get(deviceId) ?? new Map<string, string>();
+    const asked = new Set<string>();
+    for (const [device, map] of stored.requests) if (device !== deviceId) for (const hash of map.values()) asked.add(hash);
     return {
+      headSeq: stored.vault.headSeq,
       peers: stored.devices.size - 1,
       deliveries: [...owed].map(([path, hash]) => ({ path, hash, sealedName: stored.files.get(path)?.sealedName ?? null })),
+      requests: [...asked],
     };
   }
 
@@ -218,14 +231,6 @@ export class MemoryBackend implements RemoteBackend {
     for (const item of items) asked.set(item.path, item.hash);
     stored.requests.set(deviceId, asked);
     this.signal(vaultId, deviceId);
-  }
-
-  async openRequests(vaultId: string, deviceId: string): Promise<string[]> {
-    this.enter('openRequests');
-    const stored = this.stored(vaultId);
-    const hashes = new Set<string>();
-    for (const [device, asked] of stored.requests) if (device !== deviceId) for (const hash of asked.values()) hashes.add(hash);
-    return [...hashes];
   }
 
   async fulfilRequests(vaultId: string, deviceId: string, hashes: string[]): Promise<void> {

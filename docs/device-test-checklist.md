@@ -34,6 +34,11 @@ The automated tests cover the sync logic. This list covers what only a real devi
 - [ ] A new phone added to an existing vault shows "N files on their way"; opening Obsidian on the desktop sends them.
 - [ ] Encrypted vault: the `files` table in the dashboard shows ids and sealed names, never readable paths.
 
+## Light on disk
+
+- [ ] With Obsidian Git (or `git status`) watching the vault, leave Obsidian idle for 30 minutes: nothing under `.obsidian/plugins/vault-sync/` changes, and `data.json` does not change at all.
+- [ ] Edit one note: only that note and the plugin's `state/<vault>.json` change, plus at most one new file under `base/`.
+
 ## Names
 
 - [ ] Persian names with آ, ۀ, ؤ and a half-space (ZWNJ) created on an iPhone open on Windows and Android, and vice versa.

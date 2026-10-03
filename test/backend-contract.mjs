@@ -71,7 +71,8 @@ async function contract(backend, label, { graceMs = 0, collect = (vaultId) => ba
   unsubscribe();
 
   // ── relay ──────────────────────────────────────────────────────────────────
-  eq((await backend.registerDevice(vault.id, 'dev-A')).peers, 0, `${label}: first device has no peers`);
+  const firstCheckIn = await backend.registerDevice(vault.id, 'dev-A');
+  eq([firstCheckIn.peers, firstCheckIn.headSeq], [0, 4], `${label}: first device has no peers and sees the head`);
   eq((await backend.registerDevice(vault.id, 'dev-B')).peers, 1, `${label}: second device has one`);
   await backend.commit(vault.id, 'dev-A', [change('r.md', 'f', 0)]);
   await backend.putBlob(vault.id, H('f'), new Uint8Array([7]));
@@ -82,11 +83,11 @@ async function contract(backend, label, { graceMs = 0, collect = (vaultId) => ba
   eq((await backend.registerDevice(vault.id, 'dev-B')).deliveries, [], `${label}: acknowledged`);
 
   await backend.requestBlobs(vault.id, 'dev-B', [{ path: 'a.md', hash: H('e') }]);
-  eq(await backend.openRequests(vault.id, 'dev-A'), [H('e')], `${label}: A sees B's request`);
-  eq(await backend.openRequests(vault.id, 'dev-B'), [], `${label}: B does not see its own`);
+  eq((await backend.registerDevice(vault.id, 'dev-A')).requests, [H('e')], `${label}: A sees B's request in its check-in`);
+  eq((await backend.registerDevice(vault.id, 'dev-B')).requests, [], `${label}: B does not see its own`);
   await backend.putBlob(vault.id, H('e'), new Uint8Array([8]));
   await backend.fulfilRequests(vault.id, 'dev-A', [H('e')]);
-  eq(await backend.openRequests(vault.id, 'dev-A'), [], `${label}: fulfilled`);
+  eq((await backend.registerDevice(vault.id, 'dev-A')).requests, [], `${label}: fulfilled`);
   eq((await backend.registerDevice(vault.id, 'dev-B')).deliveries.map((d) => [d.path, d.hash]), [['a.md', H('e')]], `${label}: and owed to B`);
   if (graceMs) await new Promise((r) => setTimeout(r, graceMs));
   const early = await collect(vault.id);

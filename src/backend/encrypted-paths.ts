@@ -33,7 +33,6 @@ export class EncryptedPathBackend implements RemoteBackend {
   putBlob = (vaultId: string, id: string, bytes: Uint8Array) => this.inner.putBlob(vaultId, id, bytes);
   getBlob = (vaultId: string, id: string) => this.inner.getBlob(vaultId, id);
   subscribe: RemoteBackend['subscribe'] = (vaultId, onSignal) => this.inner.subscribe(vaultId, onSignal);
-  openRequests = (vaultId: string, deviceId: string) => this.inner.openRequests(vaultId, deviceId);
   fulfilRequests = (vaultId: string, deviceId: string, hashes: string[]) => this.inner.fulfilRequests(vaultId, deviceId, hashes);
   collectGarbage = (vaultId: string) => this.inner.collectGarbage(vaultId);
 
@@ -63,7 +62,7 @@ export class EncryptedPathBackend implements RemoteBackend {
         return { path: await this.cipher.open(d.sealedName, d.path), hash: d.hash };
       })
     );
-    return { peers: checkIn.peers, deliveries };
+    return { headSeq: checkIn.headSeq, peers: checkIn.peers, deliveries, requests: checkIn.requests };
   }
 
   async ackReceived(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void> {

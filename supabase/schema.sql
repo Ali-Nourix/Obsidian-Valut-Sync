@@ -1,7 +1,7 @@
--- ── Vault Sync: Supabase schema (version 2) ─────────────────────────────────
+-- ── Vault Sync: Supabase schema (version 3) ─────────────────────────────────
 -- Install with `npm run deploy`, or paste this whole file into the Supabase
--- dashboard → SQL Editor → Run. It is safe to run again, and it upgrades a
--- version 1 install in place.
+-- dashboard → SQL Editor → Run. It is safe to run again, and it upgrades an
+-- older install in place.
 --
 -- Supabase is a relay, not a store: file contents stay in the bucket only
 -- until every other device has received them, then they are deleted. What
@@ -138,6 +138,27 @@ grant select on table public.files, public.devices to authenticated;
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 
+-- Checks that the caller owns the vault, without locking or writing anything.
+-- Calls that only read (a quiet sync is one of them) use this: a row lock is a
+-- write to the database even when nothing changes.
+create or replace function public.vault_sync_owner(p_vault uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated' using errcode = '42501';
+  end if;
+  perform 1 from public.vaults v where v.id = p_vault and v.user_id = auth.uid();
+  if not found then
+    raise exception 'vault not found' using errcode = 'P0002';
+  end if;
+end;
+$$;
+revoke all on function public.vault_sync_owner(uuid) from public, anon, authenticated;
+
 -- Checks that the caller owns the vault and locks its row, so everything that
 -- changes a vault's index, devices or deliveries happens one call at a time.
 create or replace function public.vault_sync_lock(p_vault uuid)
@@ -263,9 +284,12 @@ $$;
 
 -- ── Devices and deliveries ──────────────────────────────────────────────────
 
--- Called at the start of every sync. Records the device as active, forgets
--- devices unseen for 30 days (and what they were owed), and returns how many
--- other devices there are plus the blobs still owed to this one.
+-- Called at the start of every sync, and the only call a quiet sync makes.
+-- Returns everything the device needs to decide what to do: the vault's head
+-- seq, how many other devices there are, the blobs still owed to this one,
+-- and the blobs other devices are asking for. It writes nothing unless the
+-- device is new or has not checked in for an hour: then it records the device
+-- as active and forgets devices unseen for 30 days (with what they were owed).
 create or replace function public.register_device(p_vault uuid, p_device text)
 returns jsonb
 language plpgsql
@@ -274,15 +298,29 @@ set search_path = ''
 as $$
 declare
   v_device text := left(p_device, 64);
+  v_seen   timestamptz;
+  v_head   bigint;
+  v_signal text;
   v_peers  integer;
   v_owed   jsonb;
+  v_asked  jsonb;
 begin
-  perform public.vault_sync_lock(p_vault);
-  insert into public.devices (vault_id, device_id, user_id, last_seen)
-  values (p_vault, v_device, auth.uid(), now())
-  on conflict (vault_id, device_id) do update set last_seen = now();
-  delete from public.devices dv
-   where dv.vault_id = p_vault and dv.last_seen < now() - interval '30 days';
+  perform public.vault_sync_owner(p_vault);
+
+  select dv.last_seen into v_seen
+    from public.devices dv
+   where dv.vault_id = p_vault and dv.device_id = v_device;
+  if v_seen is null or v_seen < now() - interval '1 hour' then
+    perform public.vault_sync_lock(p_vault);
+    insert into public.devices (vault_id, device_id, user_id, last_seen)
+    values (p_vault, v_device, auth.uid(), now())
+    on conflict (vault_id, device_id) do update set last_seen = now();
+    delete from public.devices dv
+     where dv.vault_id = p_vault and dv.last_seen < now() - interval '30 days';
+  end if;
+
+  select v.head_seq, coalesce(v.signal_device, v.head_device) into v_head, v_signal
+    from public.vaults v where v.id = p_vault;
   select count(*) into v_peers
     from public.devices dv
    where dv.vault_id = p_vault and dv.device_id <> v_device;
@@ -291,7 +329,11 @@ begin
     from public.deliveries d
     left join public.files f on f.vault_id = d.vault_id and f.path = d.path
    where d.vault_id = p_vault and d.device_id = v_device;
-  return jsonb_build_object('peers', v_peers, 'deliveries', v_owed);
+  select coalesce(jsonb_agg(distinct r.hash), '[]'::jsonb) into v_asked
+    from public.requests r
+   where r.vault_id = p_vault and r.device_id <> v_device;
+  return jsonb_build_object('peers', v_peers, 'head_seq', v_head, 'head_device', v_signal,
+                            'deliveries', v_owed, 'requests', v_asked);
 end;
 $$;
 
@@ -353,7 +395,7 @@ as $$
 declare
   v_out jsonb;
 begin
-  perform public.vault_sync_lock(p_vault);
+  perform public.vault_sync_owner(p_vault);
   select coalesce(jsonb_agg(distinct r.hash), '[]'::jsonb) into v_out
     from public.requests r
    where r.vault_id = p_vault and r.device_id <> left(p_device, 64);
@@ -402,7 +444,7 @@ as $$
 declare
   v_out jsonb;
 begin
-  perform public.vault_sync_lock(p_vault);
+  perform public.vault_sync_owner(p_vault);
   select coalesce(jsonb_agg(g.name), '[]'::jsonb) into v_out
     from (
       select o.name
@@ -441,7 +483,7 @@ returns integer
 language sql
 stable
 set search_path = ''
-as $$ select 2 $$;
+as $$ select 3 $$;
 
 revoke all on function public.vault_sync_schema_version() from public;
 grant execute on function public.vault_sync_schema_version() to anon, authenticated;

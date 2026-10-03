@@ -60,18 +60,18 @@ function setup(results = []) {
   eq(runs, [3000], 'startup sync after 3 s');
 
   scheduler.localChange();
-  await timers.advance(4000);
+  await timers.advance(9000);
   scheduler.localChange();
-  await timers.advance(4000);
+  await timers.advance(9000);
   eq(runs, [3000], 'edits keep pushing the sync back');
   await timers.advance(1000);
-  eq(runs, [3000, 12000], 'and it runs 5 s after the last edit');
+  eq(runs, [3000, 22000], 'and it runs 10 s after the last edit');
 
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 40; i++) {
     scheduler.localChange();
-    await timers.advance(4000);
+    await timers.advance(9000);
   }
-  eq(runs.length >= 3 && runs[2] - 12000 <= 60000, true, 'continuous typing still syncs within a minute');
+  eq(runs.length >= 3 && runs[2] - 22000 <= 180000, true, 'continuous typing still syncs within three minutes');
 
   const before = runs.length;
   scheduler.remoteChange();

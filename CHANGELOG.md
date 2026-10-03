@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 - Far fewer writes, on devices and on Supabase
+
+A sync with nothing to do now writes no file and makes one server call. Measured on a 300-note vault, five idle syncs went from 10 state-file rewrites and 20 server calls to 0 and 5.
+
+### Devices
+
+- The sync state file is written only when its content changed (it used to be rewritten two or three times per sync, even when idle), and during long syncs only every 200 files or 15 seconds.
+- The last-sync time lives in device-local storage instead of `data.json`, so settings are no longer rewritten after every sync.
+- The log file is written every five minutes at most, not after every entry.
+- A merge base is written once per version of a note, never rewritten; unused bases are cleaned up once a day instead of every few minutes.
+- Syncs after typing wait for 10 seconds of quiet (up to three minutes), and the default safety-net interval is 15 minutes.
+
+### Supabase
+
+- One check-in call (`register_device`) now returns the head, the peers, what is owed and what others asked for; a quiet sync makes no other call.
+- Calls that only read no longer lock the vault row, which is a database write even when nothing changes.
+- A device's "last seen" time is written at most once an hour.
+- Garbage collection runs once, shortly after something was delivered, plus a safety net every six hours, instead of every five minutes.
+- Schema version 3. Run `npm run deploy` again; it is backward compatible with 0.2.0 plugins.
+
 ## 0.2.0 - Supabase as a relay, not a store
 
 ### Relay

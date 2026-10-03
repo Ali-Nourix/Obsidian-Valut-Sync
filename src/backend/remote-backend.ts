@@ -46,12 +46,19 @@ export interface BlobRef {
   hash: string;
 }
 
-/** What a device learns when it checks in at the start of a sync. */
+/**
+ * What a device learns when it checks in at the start of a sync. This is the
+ * one call a quiet sync makes, so it carries everything the device needs.
+ */
 export interface CheckIn {
+  /** The seq of the vault's latest commit; nothing to pull when it equals the cursor. */
+  headSeq: number;
   /** Other devices syncing this vault (seen in the last 30 days). */
   peers: number;
   /** Blobs still owed to this device. */
   deliveries: Array<BlobRef & { sealedName?: string | null }>;
+  /** Content ids other devices are asking for. */
+  requests: string[];
 }
 
 export type BackendErrorKind =
@@ -107,14 +114,16 @@ export interface RemoteBackend {
   subscribe(vaultId: string, onSignal: (headSeq: number, device: string | null) => void): () => void;
 
   // ── Relay: the server only holds a blob until every device has it ──────
-  /** Marks this device active and returns its peers and the blobs owed to it. */
+  /**
+   * Checks in: records the device as active (at most hourly) and returns the
+   * vault's head, the device's peers, what is owed to it and what others asked for.
+   * Throws BackendError('vault-missing') when the vault is gone.
+   */
   registerDevice(vaultId: string, deviceId: string): Promise<CheckIn>;
   /** This device has these blobs now, or no longer needs them. */
   ackReceived(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void>;
   /** Asks the other devices to upload blobs that are no longer on the server. */
   requestBlobs(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void>;
-  /** Content ids other devices are asking for. */
-  openRequests(vaultId: string, deviceId: string): Promise<string[]>;
   /** This device has uploaded these blobs for the devices that asked. */
   fulfilRequests(vaultId: string, deviceId: string, hashes: string[]): Promise<void>;
   /** Deletes blobs no device needs any more; returns how many. */

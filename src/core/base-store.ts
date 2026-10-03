@@ -7,6 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface BaseStore {
+  /** Whether a copy is kept; cheaper than reading it, and what a write is checked against. */
+  has(id: string): Promise<boolean>;
   get(id: string): Promise<Uint8Array | null>;
   put(id: string, bytes: Uint8Array): Promise<void>;
   /** Deletes every copy whose id is not in `keep`. */
@@ -16,11 +18,18 @@ export interface BaseStore {
 export class MemoryBaseStore implements BaseStore {
   readonly copies = new Map<string, Uint8Array>();
 
+  readonly writes = { count: 0 };
+
+  async has(id: string): Promise<boolean> {
+    return this.copies.has(id);
+  }
+
   async get(id: string): Promise<Uint8Array | null> {
     return this.copies.get(id)?.slice() ?? null;
   }
 
   async put(id: string, bytes: Uint8Array): Promise<void> {
+    this.writes.count++;
     this.copies.set(id, bytes.slice());
   }
 

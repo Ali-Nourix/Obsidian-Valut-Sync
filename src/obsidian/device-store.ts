@@ -59,6 +59,16 @@ export class DeviceStore {
     this.set(`key:${vaultId}`, master ? toBase64(master) : null);
   }
 
+  /** When this device last synced successfully. Device-local: it is no reason to rewrite data.json. */
+  lastSyncAt(): number | null {
+    const value = Number(this.get('last-sync'));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  setLastSyncAt(at: number): void {
+    this.set('last-sync', String(at));
+  }
+
   caseInsensitive(): boolean | null {
     const value = this.get('case-insensitive');
     return value === null ? null : value === 'true';

@@ -67,6 +67,73 @@ async function suite(encrypted) {
     assertConverged(world, [A, B, C], eq, t);
   });
 
+  await scenario('quiet syncs write no files and make one server call', async (world, t) => {
+    const A = device(world, 'A');
+    const B = device(world, 'B');
+    for (let i = 0; i < 30; i++) A.write(`n${i}.md`, `note ${i}\n`);
+    await settle([A, B]);
+    await settle([A, B]);
+
+    const saves = () => A.store.saves + B.store.saves;
+    const baseWrites = () => A.baseStore.writes.count + B.baseStore.writes.count;
+    const s0 = saves();
+    const b0 = baseWrites();
+    const c0 = world.server.calls.total;
+    const g0 = world.server.calls.garbage;
+    for (let i = 0; i < 5; i++) {
+      await A.sync();
+      await B.sync();
+    }
+    eq(saves() - s0, 0, `${t}: ten idle syncs rewrite no state file`);
+    eq(baseWrites() - b0, 0, `${t}: and no merge base`);
+    eq(world.server.calls.total - c0, 10, `${t}: and make exactly one server call each`);
+    eq(world.server.calls.garbage - g0, 0, `${t}: and never poll for garbage`);
+
+    // A restart finds its state already on disk and has nothing to rewrite.
+    A.restart();
+    const s1 = A.store.saves;
+    await A.sync();
+    eq(A.store.saves - s1, 0, `${t}: a restarted device does not rewrite an unchanged state`);
+
+    // One edit costs a few writes, once.
+    const s2 = saves();
+    const b2 = baseWrites();
+    A.write('n3.md', 'note 3, edited\n');
+    await A.sync();
+    await B.sync();
+    await A.sync();
+    ok(saves() - s2 <= 4, `${t}: an edit that reaches the other device costs at most four state writes in all (${saves() - s2})`);
+    eq(baseWrites() - b2, 2, `${t}: and one merge base per device`);
+    eq(world.server.blobCount(world.vaultId), 0, `${t}: and the server is empty again`);
+    ok(world.server.calls.garbage - g0 >= 1 && world.server.calls.garbage - g0 <= 3, `${t}: garbage is collected after a delivery, not before`);
+    assertConverged(world, [A, B], eq, t);
+  });
+
+  await scenario('merge bases are pruned daily, not every sync', async (world, t) => {
+    const A = device(world, 'A');
+    const B = device(world, 'B');
+    A.write('p.md', 'v1\n');
+    await settle([A, B]);
+    let prunes = 0;
+    const prune = A.baseStore.prune.bind(A.baseStore);
+    A.baseStore.prune = async (...args) => {
+      prunes++;
+      return prune(...args);
+    };
+    for (let i = 0; i < 20; i++) {
+      A.write('p.md', `v${i + 2}\n`);
+      await settle([A, B]);
+    }
+    eq(prunes, 0, `${t}: twenty edits prune nothing within the first day`);
+    ok(A.baseStore.copies.size > 1, `${t}: old bases wait for the daily clean-up`);
+    world.clock.tick(25 * 3600_000);
+    await A.sync();
+    eq(prunes, 1, `${t}: a day later one clean-up runs`);
+    eq(A.baseStore.copies.size, 1, `${t}: and keeps only the base in use`);
+    await A.sync();
+    eq(prunes, 1, `${t}: and not again`);
+  });
+
   await scenario('relay: merging needs no copy on the server', async (world, t) => {
     const A = device(world, 'A');
     const B = device(world, 'B');

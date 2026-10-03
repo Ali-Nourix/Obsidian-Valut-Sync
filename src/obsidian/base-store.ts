@@ -23,6 +23,14 @@ export class AdapterBaseStore implements BaseStore {
     return `${this.root}/${id.slice(0, 2)}/${id}`;
   }
 
+  async has(id: string): Promise<boolean> {
+    try {
+      return await this.adapter.exists(this.path(id));
+    } catch {
+      return false;
+    }
+  }
+
   async get(id: string): Promise<Uint8Array | null> {
     try {
       if (!(await this.adapter.exists(this.path(id)))) return null;

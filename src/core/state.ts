@@ -22,6 +22,8 @@ export interface PersistedState {
   missingSince: Record<string, number>;
   /** Server path → content id that failed to upload for good (e.g. too large for the bucket). */
   rejected: Record<string, string>;
+  /** When unused merge bases were last deleted (ms); 0 until the first cycle. */
+  prunedAt?: number;
 }
 
 export interface StateStore {
@@ -38,6 +40,7 @@ export class SyncState {
   readonly base = new Map<string, BaseEntry>();
   readonly missingSince = new Map<string, number>();
   readonly rejected = new Map<string, string>();
+  prunedAt = 0;
 
   constructor(
     readonly identity: { nonce: string; userId: string; vaultId: string },
@@ -59,6 +62,7 @@ export class SyncState {
     for (const entry of saved.base) state.base.set(keyOf(entry.path), entry);
     for (const [key, at] of Object.entries(saved.missingSince ?? {})) state.missingSince.set(key, at);
     for (const [path, id] of Object.entries(saved.rejected ?? {})) state.rejected.set(path, id);
+    state.prunedAt = saved.prunedAt ?? 0;
     return { state, discarded: false };
   }
 
@@ -89,6 +93,7 @@ export class SyncState {
       base: [...this.base.values()],
       missingSince: Object.fromEntries(this.missingSince),
       rejected: Object.fromEntries(this.rejected),
+      prunedAt: this.prunedAt,
     };
   }
 }

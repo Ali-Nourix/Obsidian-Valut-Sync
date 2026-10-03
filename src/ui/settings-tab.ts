@@ -254,7 +254,7 @@ export class VaultSyncSettingTab extends PluginSettingTab {
     this.section(containerEl, 'activity', l.secStatus);
     new Setting(containerEl)
       .setName(l.lastSync)
-      .setDesc(settings.lastSyncAt ? `${new Date(settings.lastSyncAt).toLocaleString()} (${timeAgo(l, settings.lastSyncAt, Date.now())})` : l.none)
+      .setDesc(plugin.lastSyncAt ? `${new Date(plugin.lastSyncAt).toLocaleString()} (${timeAgo(l, plugin.lastSyncAt, Date.now())})` : l.none)
       .addButton((button) => button.setButtonText(l.btnSyncNow).setCta().onClick(() => plugin.syncNow()))
       .addButton((button) => button.setButtonText(l.btnOpenLog).onClick(() => plugin.openLog()));
     new Setting(containerEl).setName(l.lastError).setDesc(plugin.lastError ?? l.none);

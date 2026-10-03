@@ -29,7 +29,6 @@ export interface VaultSyncSettings {
   maxFileSizeMB: number;
   massDeleteCount: number;
   massDeletePercent: number;
-  lastSyncAt: number | null;
 }
 
 export const DEFAULT_SETTINGS: VaultSyncSettings = {
@@ -41,11 +40,10 @@ export const DEFAULT_SETTINGS: VaultSyncSettings = {
   vaultName: '',
   vaultEncryption: null,
   autoSync: true,
-  intervalMinutes: 5,
+  intervalMinutes: 15,
   realtime: true,
   excludedFolders: [],
   maxFileSizeMB: 50,
   massDeleteCount: 50,
   massDeletePercent: 25,
-  lastSyncAt: null,
 };

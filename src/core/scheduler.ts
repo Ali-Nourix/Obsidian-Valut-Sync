@@ -35,10 +35,12 @@ export interface SchedulerOptions {
 
 export const DEFAULT_SCHEDULER_OPTIONS: SchedulerOptions = {
   startupDelayMs: 3000,
-  localDebounceMs: 5000,
-  localMaxWaitMs: 60_000,
+  // A burst of typing is one sync, not one every few seconds: each sync costs
+  // server calls and file writes on every device.
+  localDebounceMs: 10_000,
+  localMaxWaitMs: 180_000,
   remoteDebounceMs: 1000,
-  intervalMs: 5 * 60_000,
+  intervalMs: 15 * 60_000,
   resumeMinGapMs: 15_000,
   backoffBaseMs: 30_000,
   backoffMaxMs: 30 * 60_000,

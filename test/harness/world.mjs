@@ -89,7 +89,7 @@ export function device(world, name, { ci = false, nfd = false, userId = 'user-1'
       concurrency: 2,
       options: () => dev.options,
       baseStore,
-      gcIntervalMs: 0,
+      gcDelayMs: 0,
     });
   };
   dev.restart();

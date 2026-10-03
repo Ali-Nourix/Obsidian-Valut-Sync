@@ -13,7 +13,7 @@ import { RemoteRow } from '../core/model';
 import { BackendError, BackendErrorKind, BlobRef, CheckIn, CommitChange, CommitResult, RemoteBackend, RemoteVault } from './remote-backend';
 
 export const BUCKET = 'vault-sync';
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 /** How long a blob nobody is owed stays before it is collected (the server never goes below a minute). */
 export const GARBAGE_GRACE_SECONDS = 600;
 
@@ -184,11 +184,18 @@ export class SupabaseBackend implements RemoteBackend {
   }
 
   async registerDevice(vaultId: string, deviceId: string): Promise<CheckIn> {
-    const data = await this.call<{ peers: number; deliveries: Array<{ path: string; hash: string; name_enc: string | null }> }>('register_device', {
-      p_vault: vaultId,
-      p_device: deviceId,
-    });
-    return { peers: data.peers, deliveries: data.deliveries.map((d) => ({ path: d.path, hash: d.hash, sealedName: d.name_enc })) };
+    const data = await this.call<{
+      peers: number;
+      head_seq: number | string;
+      deliveries: Array<{ path: string; hash: string; name_enc: string | null }>;
+      requests: string[];
+    }>('register_device', { p_vault: vaultId, p_device: deviceId });
+    return {
+      headSeq: Number(data.head_seq),
+      peers: data.peers,
+      deliveries: data.deliveries.map((d) => ({ path: d.path, hash: d.hash, sealedName: d.name_enc })),
+      requests: data.requests,
+    };
   }
 
   async ackReceived(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void> {
@@ -201,10 +208,6 @@ export class SupabaseBackend implements RemoteBackend {
     for (let i = 0; i < items.length; i += 500) {
       await this.call('request_blobs', { p_vault: vaultId, p_device: deviceId, p_items: items.slice(i, i + 500) });
     }
-  }
-
-  openRequests(vaultId: string, deviceId: string): Promise<string[]> {
-    return this.call<string[]>('open_requests', { p_vault: vaultId, p_device: deviceId });
   }
 
   async fulfilRequests(vaultId: string, deviceId: string, hashes: string[]): Promise<void> {

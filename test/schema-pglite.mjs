@@ -59,6 +59,15 @@ async function fails(promise, pattern, label) {
   }
   throw new Error(`${label}: did not fail`);
 }
+// Runs a statement as the database owner, from inside a user's block.
+const admin = async (sql, params) => {
+  await db.exec(`reset role`);
+  try {
+    return await db.query(sql, params);
+  } finally {
+    await db.exec(`set role authenticated`);
+  }
+};
 const H = (c) => c.repeat(64);
 const change = (path, hash, expected, deleted = false) => ({ path, hash: H(hash), size: 3, mtime: 1, deleted, expected_version: expected });
 const commit = async (vault, changes, device = 'A') =>
@@ -120,7 +129,7 @@ await as(U2, async () => {
 await as(U1, async () => {
   await db.query(`insert into storage.objects (bucket_id, name) values ('vault-sync', '${U1}/${vault.id}/aa/x')`);
   eq((await db.query(`select name from storage.objects`)).rows.map((r) => r.name), [`${U1}/${vault.id}/aa/x`], 'each user lists only their own blobs');
-  eq((await db.query(`select public.vault_sync_schema_version() as v`)).rows[0].v, 2, 'schema version is readable');
+  eq((await db.query(`select public.vault_sync_schema_version() as v`)).rows[0].v, 3, 'schema version is readable');
 });
 
 // ── concurrent commits: seq never goes backwards ────────────────────────────
@@ -136,16 +145,8 @@ const rpc = async (fn, args) => (await db.query(`select public.${fn}(${args.map(
 await as(U1, async () => {
   const relay = (await db.query(`insert into public.vaults (name) values ('Relay') returning id`)).rows[0].id;
   const alone = await rpc('register_device', [relay, 'A']);
-  eq(alone, { peers: 0, deliveries: [] }, 'a lone device has no peers and is owed nothing');
+  eq([alone.peers, alone.deliveries, alone.requests, Number(alone.head_seq)], [0, [], [], 0], 'a lone device has no peers, is owed nothing and sees the head');
   await commit(relay, [change('solo.md', 'a', 0)], 'A');
-  const admin = async (sql, params) => {
-    await db.exec(`reset role`);
-    try {
-      return await db.query(sql, params);
-    } finally {
-      await db.exec(`set role authenticated`);
-    }
-  };
   eq((await admin(`select count(*)::int as n from public.deliveries`)).rows[0].n, 0, 'without peers a commit owes nothing to anyone');
 
   eq((await rpc('register_device', [relay, 'B'])).peers, 1, 'a second device sees one peer');
@@ -171,6 +172,7 @@ await as(U1, async () => {
   eq(await signal(), 'B', 'which wakes the other devices');
   eq(await rpc('open_requests', [relay, 'A']), [H('a')], 'A sees the request');
   eq(await rpc('open_requests', [relay, 'B']), [], 'B does not see its own');
+  eq((await rpc('register_device', [relay, 'A'])).requests, [H('a')], 'and so does its check-in');
   eq(await rpc('fulfil_requests', [relay, 'A', JSON.stringify([H('a')])]), 1, 'A uploads and fulfils it');
   eq(await signal(), 'A', 'waking B');
   eq((await rpc('register_device', [relay, 'B'])).deliveries, [{ hash: H('a'), path: 'solo.md', name_enc: null }], 'the request became a delivery');
@@ -184,6 +186,7 @@ await as(U1, async () => {
   eq((await rpc('garbage_blobs', [relay, 0])).sort(), [blob(H('a')), blob(H('b'))].sort(), 'once B has it, its blob is garbage too (grace never below a minute)');
 
   await admin(`update public.devices set last_seen = now() - interval '31 days' where device_id = 'B'`);
+  await admin(`update public.devices set last_seen = now() - interval '2 hours' where device_id = 'A'`);
   await commit(relay, [change('late.md', 'a', 0)], 'A');
   eq((await rpc('register_device', [relay, 'A'])).peers, 0, 'a device unseen for 30 days is forgotten, with what it was owed');
   await fails(rpc('register_device', ['00000000-0000-0000-0000-000000000000', 'X']), /vault not found/, 'unknown vaults are refused');
@@ -193,6 +196,36 @@ await as(U2, async () => {
   await fails(rpc('register_device', [id, 'evil']), /vault not found/, "another user cannot join a vault");
   await fails(rpc('garbage_blobs', [id, 600]), /vault not found/, "nor list its blobs");
   await fails(db.query(`select * from public.deliveries`), /permission denied/, 'deliveries are not readable directly');
+});
+
+// ── a quiet check-in writes nothing ─────────────────────────────────────────
+await as(U1, async () => {
+  const quiet = (await db.query(`insert into public.vaults (name) values ('Quiet') returning id`)).rows[0].id;
+  await rpc('register_device', [quiet, 'A']);
+  const seen = async () => (await admin(`select last_seen from public.devices where vault_id = $1 and device_id = 'A'`, [quiet])).rows[0].last_seen.toISOString();
+  const first = await seen();
+  await admin(`update public.devices set last_seen = now() - interval '10 minutes' where vault_id = '${quiet}'`);
+  const tenMinutesAgo = await seen();
+  await rpc('register_device', [quiet, 'A']);
+  eq(await seen(), tenMinutesAgo, 'a check-in within the hour does not touch the device row');
+  await admin(`update public.devices set last_seen = now() - interval '2 hours' where vault_id = '${quiet}'`);
+  const twoHoursAgo = await seen();
+  await rpc('register_device', [quiet, 'A']);
+  eq((await seen()) !== twoHoursAgo, true, 'after an hour it records the heartbeat');
+  ok(first.length > 0, 'heartbeat time is readable');
+  const locks = (await admin(`select count(*)::int as n from pg_locks l join pg_class c on c.oid = l.relation where c.relname = 'vaults' and l.mode like '%Exclusive%'`)).rows[0].n;
+  eq(locks, 0, 'no row locks are left behind');
+  const xmaxBefore = (await admin(`select xmax::text as x from public.vaults where id = $1`, [quiet])).rows[0].x;
+  for (let i = 0; i < 3; i++) {
+    await rpc('register_device', [quiet, 'A']);
+    await rpc('open_requests', [quiet, 'A']);
+    await rpc('garbage_blobs', [quiet, 600]);
+  }
+  const xmaxAfter = (await admin(`select xmax::text as x from public.vaults where id = $1`, [quiet])).rows[0].x;
+  eq(xmaxAfter, xmaxBefore, 'check-ins, request lists and garbage lists never lock (and so never write) the vault row');
+  await rpc('ack_received', [quiet, 'A', '[]']);
+  const xmaxLocked = (await admin(`select xmax::text as x from public.vaults where id = $1`, [quiet])).rows[0].x;
+  eq(xmaxLocked !== xmaxBefore, true, 'control: a call that does lock the row is visible in xmax, so the check above can fail');
 });
 
 const pub = (await db.query(`select tablename from pg_publication_tables where pubname = 'supabase_realtime'`)).rows.map((r) => r.tablename);

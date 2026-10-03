@@ -72,6 +72,24 @@ Every device remembers the **base**: what it and the server agreed on at the las
 
 Writes go through one database function, `commit_files`. It applies each change only if the row is still at the version the device saw, so two devices can never silently overwrite each other. The loser merges and tries again. The full decision table and the reasons the cycle is crash-safe are in [docs/sync-design.md](docs/sync-design.md).
 
+## Light on disks and on Supabase
+
+Sync is built to cost almost nothing when nothing changed, because phones and SSDs feel every needless write:
+
+- A sync with no changes writes no file on the device and makes a single call to Supabase.
+- State, settings and the log are written only when they change (the log at most every five minutes), and a note's merge base is written once.
+- Typing triggers one sync after ten quiet seconds, not one per keystroke. Live updates from Supabase Realtime wake the other devices; the 15-minute timer is only a safety net.
+- On the server, read-only calls take no locks and device heartbeats are written hourly.
+
+**If your vault is in git** (for example with Obsidian Git), keep the plugin's working files out of it. Add this to the vault's `.gitignore`:
+
+```
+.obsidian/plugins/vault-sync/state/
+.obsidian/plugins/vault-sync/base/
+```
+
+Those folders hold this device's sync state and merge bases; they are meant to differ on every device and should never be committed.
+
 ## Privacy and security
 
 - Every row and every stored file belongs to your Supabase user (row level security). The publishable key alone can read or write nothing.

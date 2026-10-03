@@ -66,6 +66,10 @@ export default class VaultSyncPlugin extends Plugin {
     return getLabels(this.settings.language);
   }
 
+  get lastSyncAt(): number | null {
+    return this.device.lastSyncAt();
+  }
+
   get deviceId(): string {
     return this.device.deviceId();
   }
@@ -369,8 +373,7 @@ export default class VaultSyncPlugin extends Plugin {
     this.activity = report.status === 'needs-confirmation' ? 'waiting' : 'idle';
     if (report.waiting && !this.waitingFiles) new Notice(l.noticeWaitingFiles(report.waiting), 10_000);
     this.waitingFiles = report.waiting;
-    this.settings.lastSyncAt = Date.now();
-    await this.saveSettings();
+    this.device.setLastSyncAt(Date.now());
 
     if (report.conflicts.length > 0 && report.conflicts.length < 5) {
       for (const c of report.conflicts) new Notice(l.noticeConflict(c.path, c.copy), 10_000);
@@ -627,7 +630,8 @@ export default class VaultSyncPlugin extends Plugin {
             icon = 'hourglass';
             text = l.statusWaitingFiles(this.waitingFiles);
           } else {
-            text = this.settings.lastSyncAt ? l.statusSynced(timeAgo(l, this.settings.lastSyncAt, Date.now())) : l.statusNeverSynced;
+            const last = this.lastSyncAt;
+            text = last ? l.statusSynced(timeAgo(l, last, Date.now())) : l.statusNeverSynced;
           }
         }
     }
@@ -641,11 +645,16 @@ export default class VaultSyncPlugin extends Plugin {
     this.ribbonEl?.setAttr('aria-label', `${l.cmdSyncNow} — ${text}`);
   }
 
+  /**
+   * The log is a diagnostic aid, not data: it is written at most every five
+   * minutes (and when the plugin unloads), not after every entry, so it does
+   * not keep touching a file inside the vault.
+   */
   private saveLogSoon(): void {
     if (this.logTimer !== null) return;
     this.logTimer = window.setTimeout(() => {
       this.logTimer = null;
       void this.logFile.save(this.log.toJSON());
-    }, 2000);
+    }, 5 * 60_000);
   }
 }
