@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 - Supabase as a relay, not a store
+
+### Relay
+
+- File contents stay on the server only until every other device has them, then they are deleted. Only a small index (names, content ids, versions; no content) remains.
+- Content is uploaded only when another device needs it; a device alone uploads none.
+- A new device, or one away for more than 30 days, asks the others for what it lacks; they send it on their next sync, and Realtime wakes the asker.
+- Merge bases are kept on each device instead of on the server.
+- With encryption on, file names in the index are encrypted too.
+
+### Setup
+
+- `npm run deploy` installs or updates the backend on a Supabase project through the Management API, can create the sync account and close sign-ups, and prints the values for the plugin.
+- Schema version 2; running it over a version 1 install upgrades it in place.
+
 ## 0.1.0 - First release
 
 ### Sync

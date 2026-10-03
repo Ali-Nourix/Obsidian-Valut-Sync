@@ -27,6 +27,13 @@ The automated tests cover the sync logic. This list covers what only a real devi
 - [ ] Delete a note on the phone. It goes to the desktop's trash, and the setting "Files & links → Deleted files" is respected.
 - [ ] Delete 30 notes at once. Both devices ask before deleting. "Keep them" restores the notes.
 
+## Relay
+
+- [ ] After both devices have synced an edit, the `vault-sync` bucket in the dashboard is empty again within about ten minutes.
+- [ ] With only one device signed in, editing notes uploads nothing to the bucket.
+- [ ] A new phone added to an existing vault shows "N files on their way"; opening Obsidian on the desktop sends them.
+- [ ] Encrypted vault: the `files` table in the dashboard shows ids and sealed names, never readable paths.
+
 ## Names
 
 - [ ] Persian names with آ, ۀ, ؤ and a half-space (ZWNJ) created on an iPhone open on Windows and Android, and vice versa.

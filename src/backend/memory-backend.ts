@@ -1,24 +1,40 @@
 // ── backend/memory-backend.ts ─────────────────────────────────────────────
 // A server held in memory, with the same rules as supabase/schema.sql:
 // per-path compare-and-set, a per-vault commit counter for seq, NFC paths,
-// and content-addressed blobs. The tests run whole devices against it, and
-// its hooks let them cut the network or slip in a competing commit.
+// and the relay bookkeeping (devices, deliveries owed to them, requests for
+// blobs no longer stored, garbage collection of blobs nobody needs). The
+// tests run whole devices against it, and its hooks let them cut the network
+// or slip in a competing commit.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EncryptionHeader } from '../core/crypto';
 import { RemoteRow } from '../core/model';
 import { isValidPath, nfc } from '../core/paths';
-import { BackendError, CommitChange, CommitResult, RemoteBackend, RemoteVault } from './remote-backend';
+import { BackendError, BlobRef, CheckIn, CommitChange, CommitResult, RemoteBackend, RemoteVault } from './remote-backend';
 
 interface StoredVault {
   vault: RemoteVault;
   files: Map<string, RemoteRow>;
+  /** Device id → when it last checked in. */
+  devices: Map<string, number>;
+  /** Device id → path → content id still owed to it. */
+  deliveries: Map<string, Map<string, string>>;
+  /** Device id → path → content id it asked for. */
+  requests: Map<string, Map<string, string>>;
+}
+
+export interface MemoryBackendOptions {
+  now?: () => number;
+  /** A blob nobody is owed is kept this long before it counts as garbage. */
+  garbageGraceMs?: number;
+  /** Devices unseen this long are forgotten. */
+  staleDeviceMs?: number;
 }
 
 export class MemoryBackend implements RemoteBackend {
   readonly vaults = new Map<string, StoredVault>();
-  readonly blobs = new Map<string, Uint8Array>();
-  readonly calls = { pull: 0, commit: 0, putBlob: 0, getBlob: 0 };
+  readonly blobs = new Map<string, { bytes: Uint8Array; at: number }>();
+  readonly calls = { pull: 0, commit: 0, putBlob: 0, getBlob: 0, garbage: 0 };
   /** Every call fails as if the network were down. */
   offline = false;
   /** Runs before each commit is applied; a test can commit from "another device" here. */
@@ -28,6 +44,15 @@ export class MemoryBackend implements RemoteBackend {
   maxBlobSize = Infinity;
   private listeners = new Map<string, Set<(head: number, device: string | null) => void>>();
   private nextVault = 1;
+  private readonly now: () => number;
+  private readonly garbageGraceMs: number;
+  private readonly staleDeviceMs: number;
+
+  constructor(options: MemoryBackendOptions = {}) {
+    this.now = options.now ?? Date.now;
+    this.garbageGraceMs = options.garbageGraceMs ?? 10 * 60_000;
+    this.staleDeviceMs = options.staleDeviceMs ?? 30 * 24 * 3600_000;
+  }
 
   private enter(op: string): void {
     if (this.offline) throw new BackendError('network', 'Offline');
@@ -40,6 +65,11 @@ export class MemoryBackend implements RemoteBackend {
     return stored;
   }
 
+  private signal(vaultId: string, device: string): void {
+    const stored = this.stored(vaultId);
+    for (const listener of this.listeners.get(vaultId) ?? []) listener(stored.vault.headSeq, device);
+  }
+
   async listVaults(): Promise<RemoteVault[]> {
     this.enter('listVaults');
     return [...this.vaults.values()].map((v) => ({ ...v.vault }));
@@ -49,7 +79,7 @@ export class MemoryBackend implements RemoteBackend {
     this.enter('createVault');
     if ([...this.vaults.values()].some((v) => v.vault.name === name)) throw new BackendError('other', 'A vault with this name exists');
     const vault: RemoteVault = { id: `vault-${this.nextVault++}`, name, encryption, headSeq: 0, headDevice: null };
-    this.vaults.set(vault.id, { vault, files: new Map() });
+    this.vaults.set(vault.id, { vault, files: new Map(), devices: new Map(), deliveries: new Map(), requests: new Map() });
     return { ...vault };
   }
 
@@ -104,14 +134,26 @@ export class MemoryBackend implements RemoteBackend {
         seq: head,
         deleted: change.deleted,
         device: deviceId,
+        sealedName: change.sealedName ?? null,
       };
       stored.files.set(change.path, row);
+      for (const owed of stored.deliveries.values()) owed.delete(change.path);
+      if (change.deleted) {
+        for (const asked of stored.requests.values()) asked.delete(change.path);
+      } else {
+        for (const device of stored.devices.keys()) {
+          if (device === deviceId) continue;
+          const owed = stored.deliveries.get(device) ?? new Map<string, string>();
+          owed.set(change.path, change.hash);
+          stored.deliveries.set(device, owed);
+        }
+      }
       results.push({ ok: true, row: { ...row } });
     }
     if (head > stored.vault.headSeq) {
       stored.vault.headSeq = head;
       stored.vault.headDevice = deviceId;
-      for (const listener of this.listeners.get(vaultId) ?? []) listener(head, deviceId);
+      this.signal(vaultId, deviceId);
     }
     return results;
   }
@@ -121,22 +163,109 @@ export class MemoryBackend implements RemoteBackend {
     this.calls.putBlob++;
     if (bytes.length > this.maxBlobSize) throw new BackendError('too-large', 'Payload too large');
     const key = `${vaultId}/${id}`;
-    if (!this.blobs.has(key)) this.blobs.set(key, bytes.slice());
+    if (!this.blobs.has(key)) this.blobs.set(key, { bytes: bytes.slice(), at: this.now() });
   }
 
   async getBlob(vaultId: string, id: string): Promise<Uint8Array> {
     this.enter('getBlob');
     this.calls.getBlob++;
-    const bytes = this.blobs.get(`${vaultId}/${id}`);
-    if (!bytes) throw new BackendError('blob-missing', `Blob ${id.slice(0, 12)}… not found`);
-    return bytes.slice();
+    const blob = this.blobs.get(`${vaultId}/${id}`);
+    if (!blob) throw new BackendError('blob-missing', `Blob ${id.slice(0, 12)}… not found`);
+    return blob.bytes.slice();
   }
 
-  subscribe(vaultId: string, onHead: (head: number, device: string | null) => void): () => void {
+  subscribe(vaultId: string, onSignal: (head: number, device: string | null) => void): () => void {
     const set = this.listeners.get(vaultId) ?? new Set();
-    set.add(onHead);
+    set.add(onSignal);
     this.listeners.set(vaultId, set);
-    return () => set.delete(onHead);
+    return () => set.delete(onSignal);
+  }
+
+  async registerDevice(vaultId: string, deviceId: string): Promise<CheckIn> {
+    this.enter('registerDevice');
+    const stored = this.stored(vaultId);
+    const now = this.now();
+    stored.devices.set(deviceId, now);
+    for (const [device, seen] of stored.devices) {
+      if (now - seen <= this.staleDeviceMs) continue;
+      stored.devices.delete(device);
+      stored.deliveries.delete(device);
+      stored.requests.delete(device);
+    }
+    const owed = stored.deliveries.get(deviceId) ?? new Map<string, string>();
+    return {
+      peers: stored.devices.size - 1,
+      deliveries: [...owed].map(([path, hash]) => ({ path, hash, sealedName: stored.files.get(path)?.sealedName ?? null })),
+    };
+  }
+
+  async ackReceived(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void> {
+    this.enter('ackReceived');
+    const stored = this.stored(vaultId);
+    const owed = stored.deliveries.get(deviceId);
+    const asked = stored.requests.get(deviceId);
+    for (const item of items) {
+      if (owed?.get(item.path) === item.hash) owed.delete(item.path);
+      asked?.delete(item.path);
+    }
+  }
+
+  async requestBlobs(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void> {
+    this.enter('requestBlobs');
+    const stored = this.stored(vaultId);
+    if (!stored.devices.has(deviceId) || !items.length) return;
+    const asked = stored.requests.get(deviceId) ?? new Map<string, string>();
+    for (const item of items) asked.set(item.path, item.hash);
+    stored.requests.set(deviceId, asked);
+    this.signal(vaultId, deviceId);
+  }
+
+  async openRequests(vaultId: string, deviceId: string): Promise<string[]> {
+    this.enter('openRequests');
+    const stored = this.stored(vaultId);
+    const hashes = new Set<string>();
+    for (const [device, asked] of stored.requests) if (device !== deviceId) for (const hash of asked.values()) hashes.add(hash);
+    return [...hashes];
+  }
+
+  async fulfilRequests(vaultId: string, deviceId: string, hashes: string[]): Promise<void> {
+    this.enter('fulfilRequests');
+    const stored = this.stored(vaultId);
+    const wanted = new Set(hashes);
+    let moved = 0;
+    for (const [device, asked] of stored.requests) {
+      if (device === deviceId) continue;
+      for (const [path, hash] of [...asked]) {
+        if (!wanted.has(hash)) continue;
+        asked.delete(path);
+        const owed = stored.deliveries.get(device) ?? new Map<string, string>();
+        owed.set(path, hash);
+        stored.deliveries.set(device, owed);
+        moved++;
+      }
+    }
+    if (moved) this.signal(vaultId, deviceId);
+  }
+
+  async collectGarbage(vaultId: string): Promise<number> {
+    this.enter('collectGarbage');
+    this.calls.garbage++;
+    const stored = this.stored(vaultId);
+    const owed = new Set<string>();
+    for (const map of stored.deliveries.values()) for (const hash of map.values()) owed.add(hash);
+    const now = this.now();
+    let deleted = 0;
+    for (const [key, blob] of [...this.blobs]) {
+      if (!key.startsWith(`${vaultId}/`) || owed.has(key.slice(vaultId.length + 1)) || now - blob.at < this.garbageGraceMs) continue;
+      this.blobs.delete(key);
+      deleted++;
+    }
+    return deleted;
+  }
+
+  /** Blobs currently stored for a vault, for assertions. */
+  blobCount(vaultId: string): number {
+    return [...this.blobs.keys()].filter((k) => k.startsWith(`${vaultId}/`)).length;
   }
 
   /** Live rows of a vault, for assertions. */
@@ -148,6 +277,8 @@ export class MemoryBackend implements RemoteBackend {
   wipe(vaultId: string): void {
     const stored = this.stored(vaultId);
     stored.files.clear();
+    stored.deliveries.clear();
+    stored.requests.clear();
     stored.vault.headSeq = 0;
     for (const key of [...this.blobs.keys()]) if (key.startsWith(`${vaultId}/`)) this.blobs.delete(key);
   }

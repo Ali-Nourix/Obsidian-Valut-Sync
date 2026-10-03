@@ -1,14 +1,15 @@
 {
   "name": "vault-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "node test/paths.mjs && node test/merge.mjs && node test/crypto.mjs && node test/planner.mjs && node test/scheduler.mjs && node test/sync-sim.mjs && node test/sync-fuzz.mjs && node test/backend-contract.mjs && node test/schema-pglite.mjs && node test/plugin-load.mjs",
-    "test:live": "node test/backend-contract.mjs"
+    "test:live": "node test/backend-contract.mjs",
+    "deploy": "node scripts/deploy.mjs"
   },
-  "description": "Vault Sync — keep an Obsidian vault in sync between devices through Supabase.",
+  "description": "Vault Sync \u2014 keep an Obsidian vault in sync between devices through Supabase.",
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2"

@@ -7,18 +7,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from 'obsidian';
-import { BackendError, RemoteVault } from './src/backend/remote-backend';
+import { EncryptedPathBackend } from './src/backend/encrypted-paths';
+import { BackendError, RemoteBackend, RemoteVault } from './src/backend/remote-backend';
 import { SupabaseBackend } from './src/backend/supabase-backend';
 import { isProjectUrl, keyProblem, normalizeProjectUrl, SupabaseConnection } from './src/backend/supabase-client';
 import { BlobCodec, EncryptedCodec, PlainCodec } from './src/core/blob-codec';
 import { createEncryption, masterMatches, unlock } from './src/core/crypto';
 import { CycleReport, SyncEngine } from './src/core/engine';
 import { SyncOptions } from './src/core/model';
+import { PathCipher } from './src/core/path-cipher';
 import { isConflictCopy } from './src/core/paths';
 import { DEFAULT_SCHEDULER_OPTIONS, RunResult, SyncScheduler } from './src/core/scheduler';
 import { LogEntry, SyncLog } from './src/core/sync-log';
 import { getLabels, Labels, timeAgo } from './src/localization/labels';
 import { DeviceStore } from './src/obsidian/device-store';
+import { AdapterBaseStore } from './src/obsidian/base-store';
 import { AdapterStateStore, JsonFile } from './src/obsidian/state-store';
 import { ObsidianVaultHost, probeCaseInsensitive } from './src/obsidian/vault-host';
 import { DEFAULT_SETTINGS, VaultSyncSettings } from './src/types';
@@ -40,6 +43,8 @@ export default class VaultSyncPlugin extends Plugin {
   private logFile!: JsonFile<LogEntry[]>;
   private logTimer: number | null = null;
   private activity: Activity = 'idle';
+  /** Files this device asked its other devices for in the last sync. */
+  private waitingFiles = 0;
   private connection: SupabaseConnection | null = null;
   private backend: SupabaseBackend | null = null;
   private userId: string | null = null;
@@ -225,10 +230,12 @@ export default class VaultSyncPlugin extends Plugin {
     if (!vaultId) return this.setPhase('no-vault');
 
     let codec: BlobCodec = new PlainCodec();
+    let backend: RemoteBackend = this.backend;
     if (vaultEncryption) {
       const master = this.sessionMaster ?? this.device.rememberedKey(vaultId);
       if (!master || !(await masterMatches(master, vaultEncryption))) return this.setPhase('locked');
       codec = await EncryptedCodec.fromMaster(master);
+      backend = new EncryptedPathBackend(this.backend, await PathCipher.fromMaster(master));
     }
     let caseInsensitive = this.device.caseInsensitive();
     if (caseInsensitive === null) {
@@ -238,10 +245,11 @@ export default class VaultSyncPlugin extends Plugin {
     if (generation !== this.generation) return;
 
     this.engine = new SyncEngine({
-      backend: this.backend,
+      backend,
       host: new ObsidianVaultHost(this.app, caseInsensitive),
       codec,
       store: new AdapterStateStore(this.app.vault.adapter, this.pluginDir, vaultId),
+      baseStore: new AdapterBaseStore(this.app.vault.adapter, this.pluginDir, vaultId),
       vaultId,
       userId: this.userId,
       deviceId: this.device.deviceId(),
@@ -359,6 +367,8 @@ export default class VaultSyncPlugin extends Plugin {
     this.lastError = null;
     this.lastNotice = '';
     this.activity = report.status === 'needs-confirmation' ? 'waiting' : 'idle';
+    if (report.waiting && !this.waitingFiles) new Notice(l.noticeWaitingFiles(report.waiting), 10_000);
+    this.waitingFiles = report.waiting;
     this.settings.lastSyncAt = Date.now();
     await this.saveSettings();
 
@@ -613,7 +623,12 @@ export default class VaultSyncPlugin extends Plugin {
           icon = 'pause';
           text = l.statusPaused;
         } else {
-          text = this.settings.lastSyncAt ? l.statusSynced(timeAgo(l, this.settings.lastSyncAt, Date.now())) : l.statusNeverSynced;
+          if (this.waitingFiles) {
+            icon = 'hourglass';
+            text = l.statusWaitingFiles(this.waitingFiles);
+          } else {
+            text = this.settings.lastSyncAt ? l.statusSynced(timeAgo(l, this.settings.lastSyncAt, Date.now())) : l.statusNeverSynced;
+          }
         }
     }
     this.statusEl.empty();

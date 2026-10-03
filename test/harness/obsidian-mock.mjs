@@ -104,6 +104,18 @@ class Adapter {
   async mkdir(p) {
     this.dirs.add(this.key(p));
   }
+  async writeBinary(p, data) {
+    this.data.set(this.key(p), new Uint8Array(data).slice());
+  }
+  async readBinary(p) {
+    if (!this.data.has(this.key(p))) throw new Error(`ENOENT ${p}`);
+    return this.data.get(this.key(p)).slice().buffer;
+  }
+  async list(p) {
+    const prefix = this.key(p) + '/';
+    const direct = (k) => k.startsWith(prefix) && !k.slice(prefix.length).includes('/');
+    return { files: [...this.data.keys()].filter(direct), folders: [...this.dirs].filter(direct) };
+  }
 }
 
 export class Vault extends Events {

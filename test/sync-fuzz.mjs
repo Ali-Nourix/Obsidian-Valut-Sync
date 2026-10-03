@@ -52,9 +52,9 @@ async function history(seed, { deletes }) {
       const to = NAMES[rand(NAMES.length)].replace(/(\.\w+)$/, `-${step}$1`);
       if (!dev.host.exists(to)) dev.mv(from, to);
     } else if (op === 4) {
-      world.backend.offline = rand(4) === 0;
+      world.server.offline = rand(4) === 0;
       await dev.sync();
-      world.backend.offline = false;
+      world.server.offline = false;
     } else if (op === 5) {
       await dev.sync();
     } else {
@@ -67,6 +67,7 @@ async function history(seed, { deletes }) {
   await settle(devices, 12);
   const label = `seed ${seed}${deletes ? ' with deletes' : ''}`;
   const vault = assertConverged(world, devices, eq, label);
+  eq(world.server.blobCount(world.vaultId), 0, `${label}: the server keeps no content once everyone has it`);
 
   if (!deletes) {
     const everything = Object.values(vault).join('\n');

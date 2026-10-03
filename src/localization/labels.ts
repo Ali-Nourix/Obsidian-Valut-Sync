@@ -20,6 +20,8 @@ export interface Labels {
   statusError: string;
   statusPaused: string;
   statusWaiting: string;
+  statusWaitingFiles: (n: number) => string;
+  noticeWaitingFiles: (n: number) => string;
   justNow: string;
   minutesAgo: (n: number) => string;
   hoursAgo: (n: number) => string;
@@ -157,6 +159,9 @@ const EN: Labels = {
   statusError: 'Sync: error',
   statusPaused: 'Sync: paused',
   statusWaiting: 'Sync: waiting for you',
+  statusWaitingFiles: (n) => `Sync: ${n} files on their way`,
+  noticeWaitingFiles: (n) =>
+    `Vault Sync: ${n} files are no longer on the server and were requested from your other devices. They arrive the next time one of those devices has Obsidian open.`,
   justNow: 'just now',
   minutesAgo: (n) => `${n} min ago`,
   hoursAgo: (n) => `${n} h ago`,
@@ -164,7 +169,7 @@ const EN: Labels = {
   noticeSynced: (up, down) => `Vault Sync: ↑${up} ↓${down}`,
   noticeConflict: (path, copy) => `Conflict in ${path}. The other version was saved as ${copy}.`,
   noticeConflicts: (n) => `${n} conflicts. Open the sync log to see the copies that were made.`,
-  noticeSchemaMissing: 'Vault Sync: the database is not set up. Run supabase/schema.sql in the Supabase SQL Editor.',
+  noticeSchemaMissing: 'Vault Sync: the database is not set up or out of date. Run `npm run deploy` (or supabase/schema.sql in the Supabase SQL Editor).',
   noticeAuthExpired: 'Vault Sync: your session ended. Sign in again in the settings.',
   noticeVaultMissing: 'Vault Sync: the remote vault was deleted. Choose or create another one in the settings.',
   noticePaused: 'Vault Sync: the Supabase project looks paused (free projects pause after a week without use). Restore it in the Supabase dashboard.',
@@ -190,7 +195,7 @@ const EN: Labels = {
   cmdSignOut: 'Sign out',
   setLanguage: 'Language',
   secConnection: 'Supabase project',
-  secConnectionDesc: 'Create a free project at supabase.com, run supabase/schema.sql in its SQL Editor once, then copy the URL and publishable key from Project Settings → API.',
+  secConnectionDesc: 'Create a free project at supabase.com and install the backend once with `npm run deploy` (or run supabase/schema.sql in its SQL Editor), then enter the URL and publishable key it prints. Supabase only relays your files: contents are deleted once your other devices have them.',
   setUrl: 'Project URL',
   setUrlDesc: 'For example https://abcdefghijklmnopqrst.supabase.co',
   setKey: 'Publishable (anon) key',
@@ -301,6 +306,9 @@ const FA: Labels = {
   statusError: 'همگام‌سازی: خطا',
   statusPaused: 'همگام‌سازی: متوقف',
   statusWaiting: 'همگام‌سازی: منتظر شما',
+  statusWaitingFiles: (n) => `همگام‌سازی: ${n} فایل در راه است`,
+  noticeWaitingFiles: (n) =>
+    `همگام‌سازی: ${n} فایل دیگر روی سرور نیست و از دستگاه‌های دیگرتان درخواست شد. دفعهٔ بعد که Obsidian روی یکی از آن دستگاه‌ها باز شود، می‌رسند.`,
   justNow: 'همین حالا',
   minutesAgo: (n) => `${n} دقیقه پیش`,
   hoursAgo: (n) => `${n} ساعت پیش`,
@@ -308,7 +316,7 @@ const FA: Labels = {
   noticeSynced: (up, down) => `همگام‌سازی: ↑${up} ↓${down}`,
   noticeConflict: (path, copy) => `تعارض در ${path}. نسخهٔ دیگر با نام ${copy} ذخیره شد.`,
   noticeConflicts: (n) => `${n} تعارض پیش آمد. برای دیدن نسخه‌های ذخیره‌شده، گزارش همگام‌سازی را باز کنید.`,
-  noticeSchemaMissing: 'همگام‌سازی: پایگاه داده آماده نیست. فایل supabase/schema.sql را در SQL Editor سوپابیس اجرا کنید.',
+  noticeSchemaMissing: 'همگام‌سازی: پایگاه داده آماده یا به‌روز نیست. دستور `npm run deploy` را اجرا کنید (یا فایل supabase/schema.sql را در SQL Editor سوپابیس).',
   noticeAuthExpired: 'همگام‌سازی: نشست شما تمام شده. در تنظیمات دوباره وارد شوید.',
   noticeVaultMissing: 'همگام‌سازی: والت روی سرور حذف شده. در تنظیمات والت دیگری انتخاب یا بسازید.',
   noticePaused: 'همگام‌سازی: پروژهٔ سوپابیس متوقف شده است (پروژه‌های رایگان پس از یک هفته استفاده‌نشدن متوقف می‌شوند). آن را از داشبورد سوپابیس دوباره فعال کنید.',
@@ -334,7 +342,7 @@ const FA: Labels = {
   cmdSignOut: 'خروج از حساب',
   setLanguage: 'زبان',
   secConnection: 'پروژهٔ سوپابیس',
-  secConnectionDesc: 'یک پروژهٔ رایگان در supabase.com بسازید، یک بار فایل supabase/schema.sql را در SQL Editor آن اجرا کنید، سپس URL و کلید publishable را از Project Settings → API کپی کنید.',
+  secConnectionDesc: 'یک پروژهٔ رایگان در supabase.com بسازید و یک بار با `npm run deploy` (یا اجرای supabase/schema.sql در SQL Editor) آن را آماده کنید، سپس آدرس و کلید publishable را که چاپ می‌کند وارد کنید. Supabase فقط فایل‌ها را منتقل می‌کند: وقتی دستگاه‌های دیگرتان گرفتند، محتوا پاک می‌شود.',
   setUrl: 'آدرس پروژه',
   setUrlDesc: 'مثلاً https://abcdefghijklmnopqrst.supabase.co',
   setKey: 'کلید publishable (anon)',

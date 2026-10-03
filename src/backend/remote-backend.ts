@@ -21,6 +21,8 @@ export interface RemoteVault {
 
 export interface CommitChange {
   path: string;
+  /** Encrypted vaults: the real path, sealed; `path` then holds a keyed id. */
+  sealedName?: string | null;
   hash: string;
   size: number;
   mtime: number;
@@ -36,6 +38,20 @@ export interface CommitResult {
   ok: boolean;
   /** The row after the commit, or, when refused, the row as it stands (null if none). */
   row: RemoteRow | null;
+}
+
+/** A blob a device needs, by the path that refers to it. */
+export interface BlobRef {
+  path: string;
+  hash: string;
+}
+
+/** What a device learns when it checks in at the start of a sync. */
+export interface CheckIn {
+  /** Other devices syncing this vault (seen in the last 30 days). */
+  peers: number;
+  /** Blobs still owed to this device. */
+  deliveries: Array<BlobRef & { sealedName?: string | null }>;
 }
 
 export type BackendErrorKind =
@@ -84,8 +100,25 @@ export interface RemoteBackend {
   putBlob(vaultId: string, id: string, bytes: Uint8Array): Promise<void>;
   /** Throws BackendError('blob-missing') when there is no such blob. */
   getBlob(vaultId: string, id: string): Promise<Uint8Array>;
-  /** Calls back when the vault's head moves; returns an unsubscribe function. */
-  subscribe(vaultId: string, onHead: (headSeq: number, device: string | null) => void): () => void;
+  /**
+   * Calls back when another device commits, asks for blobs or delivers them
+   * (`device` is who did it); returns an unsubscribe function.
+   */
+  subscribe(vaultId: string, onSignal: (headSeq: number, device: string | null) => void): () => void;
+
+  // ── Relay: the server only holds a blob until every device has it ──────
+  /** Marks this device active and returns its peers and the blobs owed to it. */
+  registerDevice(vaultId: string, deviceId: string): Promise<CheckIn>;
+  /** This device has these blobs now, or no longer needs them. */
+  ackReceived(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void>;
+  /** Asks the other devices to upload blobs that are no longer on the server. */
+  requestBlobs(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void>;
+  /** Content ids other devices are asking for. */
+  openRequests(vaultId: string, deviceId: string): Promise<string[]>;
+  /** This device has uploaded these blobs for the devices that asked. */
+  fulfilRequests(vaultId: string, deviceId: string, hashes: string[]): Promise<void>;
+  /** Deletes blobs no device needs any more; returns how many. */
+  collectGarbage(vaultId: string): Promise<number>;
 }
 
 /** Most changes one commit call may carry; the server enforces a limit too. */

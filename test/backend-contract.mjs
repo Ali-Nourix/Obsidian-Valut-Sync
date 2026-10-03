@@ -20,9 +20,21 @@ const live = await loadTs(`
 `);
 
 const H = (c) => c.repeat(64);
+
+/** Every object under a storage prefix, walking the <id[0:2]> folders. */
+async function listObjects(client, prefix) {
+  const { data, error } = await client.storage.from(live.BUCKET).list(prefix, { limit: 1000 });
+  if (error) throw error;
+  const out = [];
+  for (const entry of data) {
+    if (entry.id) out.push(`${prefix}/${entry.name}`);
+    else out.push(...(await listObjects(client, `${prefix}/${entry.name}`)));
+  }
+  return out;
+}
 const change = (path, hash, expectedVersion, deleted = false) => ({ path, hash: H(hash), size: 1, mtime: 1, deleted, expectedVersion });
 
-async function contract(backend, label) {
+async function contract(backend, label, { graceMs = 0, collect = (vaultId) => backend.collectGarbage(vaultId) } = {}) {
   const name = `contract-${Date.now()}`;
   const vault = await backend.createVault(name, null);
   eq([vault.name, vault.headSeq, vault.encryption], [name, 0, null], `${label}: create`);
@@ -59,10 +71,42 @@ async function contract(backend, label) {
   for (let i = 0; i < 20 && !heads.some(([h]) => h === 4); i++) await new Promise((r) => setTimeout(r, 250));
   ok(heads.some(([h, dev]) => h === 4 && dev === 'dev-B'), `${label}: subscribers hear the new head`);
   unsubscribe();
+
+  // ── relay ──────────────────────────────────────────────────────────────────
+  eq((await backend.registerDevice(vault.id, 'dev-A')).peers, 0, `${label}: first device has no peers`);
+  eq((await backend.registerDevice(vault.id, 'dev-B')).peers, 1, `${label}: second device has one`);
+  await backend.commit(vault.id, 'dev-A', [change('r.md', 'f', 0)]);
+  await backend.putBlob(vault.id, H('f'), new Uint8Array([7]));
+  const owed = (await backend.registerDevice(vault.id, 'dev-B')).deliveries.map((d) => [d.path, d.hash]);
+  eq(owed, [['r.md', H('f')]], `${label}: B is owed A's new blob`);
+  eq((await backend.registerDevice(vault.id, 'dev-A')).deliveries, [], `${label}: A is not`);
+  await backend.ackReceived(vault.id, 'dev-B', [{ path: 'r.md', hash: H('f') }]);
+  eq((await backend.registerDevice(vault.id, 'dev-B')).deliveries, [], `${label}: acknowledged`);
+
+  await backend.requestBlobs(vault.id, 'dev-B', [{ path: 'a.md', hash: H('e') }]);
+  eq(await backend.openRequests(vault.id, 'dev-A'), [H('e')], `${label}: A sees B's request`);
+  eq(await backend.openRequests(vault.id, 'dev-B'), [], `${label}: B does not see its own`);
+  await backend.putBlob(vault.id, H('e'), new Uint8Array([8]));
+  await backend.fulfilRequests(vault.id, 'dev-A', [H('e')]);
+  eq(await backend.openRequests(vault.id, 'dev-A'), [], `${label}: fulfilled`);
+  eq((await backend.registerDevice(vault.id, 'dev-B')).deliveries.map((d) => [d.path, d.hash]), [['a.md', H('e')]], `${label}: and owed to B`);
+  if (graceMs) await new Promise((r) => setTimeout(r, graceMs));
+  const early = await collect(vault.id);
+  eq(Array.from(await backend.getBlob(vault.id, H('e'))), [8], `${label}: a blob still owed survives garbage collection`);
+  await backend.ackReceived(vault.id, 'dev-B', [{ path: 'a.md', hash: H('e') }]);
+  ok(early + (await collect(vault.id)) >= 3, `${label}: delivered and unowed blobs are collected`);
+  for (const id of [H('c'), H('e'), H('f')]) {
+    try {
+      await backend.getBlob(vault.id, id);
+      throw new Error(`${label}: blob ${id.slice(0, 4)} survived`);
+    } catch (error) {
+      eq(error instanceof BackendError ? error.kind : String(error), 'blob-missing', `${label}: blob ${id.slice(0, 4)} is gone`);
+    }
+  }
   return vault;
 }
 
-await contract(new MemoryBackend(), 'memory');
+await contract(new MemoryBackend({ garbageGraceMs: 0 }), 'memory');
 
 const env = process.env;
 if (!env.VAULT_SYNC_SUPABASE_URL || !env.VAULT_SYNC_SUPABASE_KEY || !env.VAULT_SYNC_SUPABASE_EMAIL || !env.VAULT_SYNC_SUPABASE_PASSWORD) {
@@ -95,7 +139,8 @@ if (!env.VAULT_SYNC_SUPABASE_URL || !env.VAULT_SYNC_SUPABASE_KEY || !env.VAULT_S
 
   const vaults = [];
   try {
-    vaults.push(await contract(tracked(one.backend), 'live'));
+    console.log('live: running the backend contract (waits about a minute for the garbage grace period)…');
+    vaults.push(await contract(tracked(one.backend), 'live', { graceMs: 61_000, collect: (id) => one.backend.collectGarbage(id, 60) }));
 
     const two = await connect();
     const world = { clock: new Clock(), backend: tracked(one.backend), codec: new PlainCodec(), vaultId: null };
@@ -115,7 +160,11 @@ if (!env.VAULT_SYNC_SUPABASE_URL || !env.VAULT_SYNC_SUPABASE_KEY || !env.VAULT_S
     await settle([A, B]);
     eq(A.read('Daily/روزانه.md'), '# امروز\n- A\n- B\n', 'live: concurrent appends merged');
     const rows = (await one.backend.pull(vault.id, 0, 1000)).filter((r) => !r.deleted).map((r) => r.path).sort();
-    eq(rows, ['Daily/روزانه.md', 'img.bin'], 'live: the server holds the synced files');
+    eq(rows, ['Daily/روزانه.md', 'img.bin'], 'live: the index lists the synced files');
+    console.log('live: waiting out the garbage grace period…');
+    await new Promise((r) => setTimeout(r, 61_000));
+    await one.backend.collectGarbage(vault.id, 60);
+    eq(await listObjects(one.connection.client, `${one.userId}/${vault.id}`), [], 'live: no file content is left on the server');
     await two.connection.close();
   } finally {
     for (const v of vaults) await one.connection.client.from('vaults').delete().eq('id', v.id);

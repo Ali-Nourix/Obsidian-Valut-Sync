@@ -6,20 +6,30 @@
 //   2. server → device: renames, downloads, merges, conflict copies
 //   3. device → server: blobs first, then one compare-and-set commit per batch
 //   4. local deletions, then empty folders they leave behind
+//   5. relay upkeep: serve blobs other devices asked for, ask for blobs that
+//      are no longer on the server, acknowledge what arrived, collect garbage
+//
+// The server is a relay. A blob is uploaded only when another device will
+// need it, stays only until every such device has acknowledged it, and is
+// then collected. A device that finds a blob gone asks for it; any device
+// holding that content uploads it on its next cycle. Merge bases are kept on
+// the device itself (BaseStore), not on the server.
 //
 // The cycle needs no journal because of four rules: a base changes only
 // after its effect is durable; a content id is committed only after its blob
-// is stored; the cursor and the mirror are saved together; and a base that
-// lags behind heals itself ("changed on both sides to the same content" is
-// simply adopted). A cycle cut short at any point is finished by the next.
+// is stored (when anyone else needs it); the cursor and the mirror are saved
+// together; and a base that lags behind heals itself ("changed on both sides
+// to the same content" is simply adopted). A cycle cut short at any point is
+// finished by the next.
 // Writes into the vault are guarded: if the user touched a file after the
 // scan, the write is skipped and the next cycle merges the edit instead.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BackendError, COMMIT_BATCH, CommitChange, PULL_PAGE, RemoteBackend } from '../backend/remote-backend';
+import { BackendError, BlobRef, COMMIT_BATCH, CommitChange, PULL_PAGE, RemoteBackend } from '../backend/remote-backend';
+import { BaseStore, MemoryBaseStore } from './base-store';
 import { BlobCodec, BlobIntegrityError } from './blob-codec';
 import { decodeUtf8, utf8 } from './bytes';
-import { mergeText } from './merge';
+import { isMergeable, mergeText } from './merge';
 import { DEFAULT_SYNC_OPTIONS, LocalFile, LocalStat, RemoteRow, SyncOptions } from './model';
 import { conflictCopyName, inScope, isConflictCopyOf, nfc, parentFolder, pathKey } from './paths';
 import { Action, DeleteSummary, deletionsIn, LocalEntry, needsDeleteConfirmation, plan } from './planner';
@@ -63,6 +73,10 @@ export interface EngineDeps {
   now?: () => number;
   /** Transfers running at once; lower on phones to bound memory. */
   concurrency?: number;
+  /** Local merge bases; kept in memory when not given. */
+  baseStore?: BaseStore;
+  /** How often to collect blobs nobody needs (default 5 minutes). */
+  gcIntervalMs?: number;
 }
 
 export type CycleStatus = 'synced' | 'needs-confirmation' | 'error';
@@ -77,6 +91,10 @@ export interface CycleReport {
   merged: string[];
   conflicts: Array<{ path: string; copy: string }>;
   skipped: string[];
+  /** Files this device is waiting for: their content is no longer on the server and was requested. */
+  waiting: number;
+  /** Files uploaded because another device asked for them. */
+  served: number;
   /** Deletions waiting for the user's answer, when status is needs-confirmation. */
   confirmation: DeleteSummary | null;
   /** Ask again after this long: a missing file is waiting to count as deleted. */
@@ -95,6 +113,8 @@ export function emptyReport(): CycleReport {
     merged: [],
     conflicts: [],
     skipped: [],
+    waiting: 0,
+    served: 0,
     confirmation: null,
     followUpMs: null,
     error: null,
@@ -142,10 +162,21 @@ interface Cycle {
   /** Keys taken by conflict copies created this cycle. */
   reserved: Set<string>;
   rerun: boolean;
+  /** Other devices that will need what this one uploads. */
+  peers: number;
+  /** Blobs owed to this device when the cycle started. */
+  owed: BlobRef[];
+  /** Blobs this device needed but did not find on the server, by path. */
+  missing: Map<string, BlobRef>;
+  /** Content ids uploaded this cycle. */
+  uploaded: Set<string>;
+  /** Content of files renamed here: peers rename too and need no upload. */
+  renamedIds: Set<string>;
 }
 
 const MAX_ROUNDS = 4;
 const OWN_WRITE_MS = 3000;
+const GC_INTERVAL_MS = 5 * 60_000;
 
 export class SyncEngine {
   private state: SyncState | null = null;
@@ -157,7 +188,8 @@ export class SyncEngine {
   private readonly approved = new Set<string>();
   private pending: DeleteSummary | null = null;
   private readonly recentWrites = new Map<string, number>();
-  private readonly knownBlobs = new Set<string>();
+  private readonly baseStore: BaseStore;
+  private lastGc = -Infinity;
   private emptyId: string | null = null;
   private lastSave = 0;
   private unsaved = 0;
@@ -173,6 +205,7 @@ export class SyncEngine {
     this.log = deps.log ?? new SyncLog(500, this.now);
     this.options = deps.options ?? (() => DEFAULT_SYNC_OPTIONS);
     this.keyOf = (path) => pathKey(path, deps.host.caseInsensitive);
+    this.baseStore = deps.baseStore ?? new MemoryBaseStore();
   }
 
   get vaultId(): string {
@@ -254,7 +287,6 @@ export class SyncEngine {
     this.state = null;
     this.pending = null;
     this.deleteEvents.clear();
-    this.knownBlobs.clear();
   }
 
   private async rounds(): Promise<CycleReport> {
@@ -271,6 +303,8 @@ export class SyncEngine {
       total.merged.push(...report.merged);
       total.conflicts.push(...report.conflicts);
       total.skipped = report.skipped;
+      total.waiting = report.waiting;
+      total.served += report.served;
       total.confirmation = report.confirmation;
       total.followUpMs = report.followUpMs;
       total.error = report.error;
@@ -332,8 +366,11 @@ export class SyncEngine {
       } catch {
         // An editor that cannot save right now is picked up by the next cycle.
       }
+      const checkIn = await this.deps.backend.registerDevice(this.deps.vaultId, this.deps.deviceId);
       await this.pull(state);
       const cycle = await this.prepare(state, report);
+      cycle.peers = checkIn.peers;
+      cycle.owed = checkIn.deliveries;
       await this.execute(cycle);
       for (const key of this.deleteEvents) if (!state.base.has(key)) this.deleteEvents.delete(key);
       await this.save(state);
@@ -479,6 +516,11 @@ export class SyncEngine {
       folders: new Set(),
       reserved: new Set(),
       rerun: false,
+      peers: 0,
+      owed: [],
+      missing: new Map(),
+      uploaded: new Set(),
+      renamedIds: new Set(),
     };
   }
 
@@ -486,10 +528,11 @@ export class SyncEngine {
     const { state, actions } = cycle;
     const of = <K extends Action['kind']>(kind: K) => actions.filter((a): a is Extract<Action, { kind: K }> => a.kind === kind);
 
-    for (const blobId of [...state.remote.values()].map((r) => r.hash)) this.knownBlobs.add(blobId);
+    for (const a of of('tombstone')) cycle.renamedIds.add(a.base.hash);
 
     // 1. Bookkeeping.
     for (const a of of('adopt')) {
+      if (isMergeable(a.remote.path)) await this.keepBase(a.remote.hash, () => this.deps.host.read(a.local.path));
       state.setBase({ path: a.remote.path, hash: a.remote.hash, version: a.remote.version, mtime: a.local.mtime, size: a.local.size });
       this.deleteEvents.delete(a.key);
     }
@@ -536,6 +579,110 @@ export class SyncEngine {
     }
     const folders = [...cycle.folders].filter(Boolean);
     if (folders.length) await this.deps.host.removeEmptyFolders(folders);
+
+    // 5. Relay upkeep.
+    await this.serveRequests(cycle);
+    if (cycle.missing.size) {
+      await this.deps.backend.requestBlobs(this.deps.vaultId, this.deps.deviceId, [...cycle.missing.values()]);
+      cycle.report.waiting = cycle.missing.size;
+      this.log.add('info', undefined, `Asked the other devices for ${cycle.missing.size} files that are no longer on the server`);
+    }
+    await this.acknowledge(cycle);
+    await this.collectGarbage(state);
+  }
+
+  /**
+   * Keeps a merge base for a note, unless one is already kept. `bytes` is a
+   * function so the content is only read when it is actually needed.
+   */
+  private async keepBase(id: string, bytes: () => Promise<Uint8Array>): Promise<void> {
+    if (await this.baseStore.get(id)) return;
+    try {
+      const content = await bytes();
+      if ((await this.deps.codec.id(content)) === id) await this.baseStore.put(id, content);
+    } catch {
+      // Without a kept base a later concurrent edit becomes a conflict copy instead of a merge.
+    }
+  }
+
+  /**
+   * The bytes of a blob for one of this device's actions, or null when the
+   * server no longer has it: then it is asked for, and the action waits.
+   */
+  private async fetchOrRequest(cycle: Cycle, row: RemoteRow): Promise<Uint8Array | null> {
+    try {
+      return await this.fetchPlain(row.hash);
+    } catch (error) {
+      if (!(error instanceof BackendError && error.kind === 'blob-missing')) throw error;
+      cycle.missing.set(row.path, { path: row.path, hash: row.hash });
+      return null;
+    }
+  }
+
+  /** Uploads content other devices asked for, if this device holds it. */
+  private async serveRequests(cycle: Cycle): Promise<void> {
+    const { backend, codec, vaultId, deviceId } = this.deps;
+    const wanted = await backend.openRequests(vaultId, deviceId);
+    if (!wanted.length) return;
+    const holders = new Map<string, string>();
+    for (const base of cycle.state.base.values()) if (!holders.has(base.hash)) holders.set(base.hash, base.path);
+    const served: string[] = [];
+    const empty = await this.emptyBlobId();
+    await forEachLimit(wanted, this.deps.concurrency ?? 2, async (id) => {
+      const path = holders.get(id);
+      let bytes: Uint8Array | null = null;
+      if (path && this.deps.host.stat(path)) {
+        try {
+          bytes = await this.deps.host.read(path);
+        } catch {
+          bytes = null;
+        }
+      }
+      if (!bytes || (await codec.id(bytes)) !== id) bytes = await this.baseStore.get(id);
+      if (!bytes || (await codec.id(bytes)) !== id) return;
+      if (id !== empty && !cycle.uploaded.has(id)) await backend.putBlob(vaultId, id, await codec.seal(bytes, id));
+      cycle.uploaded.add(id);
+      served.push(id);
+    });
+    if (!served.length) return;
+    await backend.fulfilRequests(vaultId, deviceId, served);
+    cycle.report.served += served.length;
+    this.log.add('info', undefined, `Sent ${served.length} files another device asked for`);
+  }
+
+  /**
+   * Tells the server which owed blobs this device no longer needs: it has
+   * them, the path moved on, or the file is outside what this device syncs.
+   * Once nobody is owed a blob, it is garbage.
+   */
+  private async acknowledge(cycle: Cycle): Promise<void> {
+    const { state } = cycle;
+    const opts = this.options();
+    const limit = opts.maxFileSize - this.deps.codec.overhead;
+    const settled = cycle.owed.filter((owed) => {
+      if (cycle.missing.has(owed.path)) return false;
+      if (state.base.get(this.keyOf(owed.path))?.hash === owed.hash) return true;
+      const row = state.remote.get(owed.path);
+      if (!row || row.deleted || row.hash !== owed.hash) return true;
+      return !inScope(owed.path, opts.excludedFolders, this.deps.host.caseInsensitive) || row.size > limit;
+    });
+    if (settled.length) await this.deps.backend.ackReceived(this.deps.vaultId, this.deps.deviceId, settled.map(({ path, hash }) => ({ path, hash })));
+  }
+
+  /** Every few minutes: delete blobs nobody needs, and merge bases no file uses. */
+  private async collectGarbage(state: SyncState): Promise<void> {
+    const now = this.now();
+    if (now - this.lastGc < (this.deps.gcIntervalMs ?? GC_INTERVAL_MS)) return;
+    this.lastGc = now;
+    try {
+      const removed = await this.deps.backend.collectGarbage(this.deps.vaultId);
+      if (removed) this.log.add('info', undefined, `Removed ${removed} delivered files from the server`);
+    } catch (error) {
+      if (error instanceof BackendError && !error.transient) throw error;
+    }
+    const keep = new Set<string>();
+    for (const base of state.base.values()) if (isMergeable(base.path)) keep.add(base.hash);
+    await this.baseStore.prune(keep);
   }
 
   /**
@@ -575,7 +722,9 @@ export class SyncEngine {
   }
 
   private async download(cycle: Cycle, a: Extract<Action, { kind: 'download' }>): Promise<void> {
-    const bytes = await this.fetchPlain(a.remote.hash);
+    const bytes = await this.fetchOrRequest(cycle, a.remote);
+    if (!bytes) return;
+    if (isMergeable(a.remote.path)) await this.baseStore.put(a.remote.hash, bytes);
     const target = a.local ? a.local.path : a.remote.path;
     const expect = a.local ? { mtime: a.local.mtime, size: a.local.size } : null;
     const result = await this.deps.host.write(target, bytes, expect, a.remote.mtime);
@@ -591,15 +740,19 @@ export class SyncEngine {
   }
 
   private async merge(cycle: Cycle, a: Extract<Action, { kind: 'merge' }>): Promise<void> {
-    let baseBytes: Uint8Array;
-    try {
-      baseBytes = await this.fetchPlain(a.base.hash);
-    } catch (error) {
-      const unavailable = error instanceof BlobIntegrityError || (error instanceof BackendError && error.kind === 'blob-missing');
-      if (!unavailable) throw error;
-      return this.conflict(cycle, { kind: 'conflict', key: a.key, local: a.local, remote: a.remote });
+    let baseBytes = await this.baseStore.get(a.base.hash);
+    if (baseBytes && (await this.deps.codec.id(baseBytes)) !== a.base.hash) baseBytes = null;
+    if (!baseBytes) {
+      try {
+        baseBytes = await this.fetchPlain(a.base.hash);
+      } catch (error) {
+        const unavailable = error instanceof BlobIntegrityError || (error instanceof BackendError && error.kind === 'blob-missing');
+        if (!unavailable) throw error;
+        return this.conflict(cycle, { kind: 'conflict', key: a.key, local: a.local, remote: a.remote });
+      }
     }
-    const remoteBytes = await this.fetchPlain(a.remote.hash);
+    const remoteBytes = await this.fetchOrRequest(cycle, a.remote);
+    if (!remoteBytes) return;
     const localBytes = await this.deps.host.read(a.local.path);
     if ((await this.deps.codec.id(localBytes)) !== a.local.hash) {
       cycle.rerun = true; // edited again since the scan
@@ -618,6 +771,7 @@ export class SyncEngine {
         return;
       }
       this.markWrite(a.local.path);
+      await this.baseStore.put(a.remote.hash, remoteBytes);
       cycle.state.setBase({ path: a.remote.path, hash: a.remote.hash, version: a.remote.version, ...result });
     } else {
       if (outcome.text !== localText) {
@@ -642,7 +796,8 @@ export class SyncEngine {
   private async conflict(cycle: Cycle, a: Extract<Action, { kind: 'conflict' }>): Promise<void> {
     const { state, report } = cycle;
     const host = this.deps.host;
-    const remoteBytes = await this.fetchPlain(a.remote.hash);
+    const remoteBytes = await this.fetchOrRequest(cycle, a.remote);
+    if (!remoteBytes) return;
 
     const existing = cycle.local.find((e) => e.hash === a.remote.hash && isConflictCopyOf(e.path, a.local.path));
     let copy: string;
@@ -665,8 +820,10 @@ export class SyncEngine {
 
     const copyPath = nfc(copy);
     const synced = state.base.get(this.keyOf(copy));
+    if (isMergeable(copyPath)) await this.baseStore.put(a.remote.hash, remoteBytes);
     if (!synced || synced.hash !== a.remote.hash) cycle.commits.push({
-      // The copy's content is already on the server under the same id: nothing to upload.
+      // The copy holds the other device's version, which that device already has and
+      // which any third device is still owed on the server: nothing to upload.
       change: { path: copyPath, hash: a.remote.hash, size: a.remote.size, mtime: stat.mtime, deleted: false, expectedVersion: state.remote.get(copyPath)?.version ?? 0 },
       onOk: (row) => state.setBase({ path: row.path, hash: row.hash, version: row.version, ...stat }),
     });
@@ -685,15 +842,19 @@ export class SyncEngine {
     }
     const bytes = await this.deps.host.read(a.local.path);
     const id = await codec.id(bytes);
-    if (!this.knownBlobs.has(id) && id !== (await this.emptyBlobId())) {
+    // Only what another device will fetch goes up: nothing when this device is
+    // alone, and nothing for a rename (the others rename their own copy).
+    const needed = cycle.peers > 0 && !cycle.renamedIds.has(id) && !cycle.uploaded.has(id) && id !== (await this.emptyBlobId());
+    if (needed) {
       try {
         await backend.putBlob(vaultId, id, await codec.seal(bytes, id));
       } catch (error) {
         if (error instanceof BackendError && error.kind === 'too-large') state.rejected.set(a.remotePath, id);
         throw error;
       }
-      this.knownBlobs.add(id);
+      cycle.uploaded.add(id);
     }
+    if (isMergeable(a.remotePath)) await this.baseStore.put(id, bytes);
     cycle.commits.push({
       change: { path: a.remotePath, hash: id, size: bytes.length, mtime: before.mtime, deleted: false, expectedVersion: a.expected },
       onOk: (row) => {

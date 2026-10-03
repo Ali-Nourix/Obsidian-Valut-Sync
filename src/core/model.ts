@@ -28,6 +28,8 @@ export interface RemoteRow {
   seq: number;
   deleted: boolean;
   device: string | null;
+  /** Encrypted vaults only, between the backend and the path decryption. */
+  sealedName?: string | null;
 }
 
 /**

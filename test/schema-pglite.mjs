@@ -24,7 +24,8 @@ await db.exec(`
   create table storage.objects (
     id uuid primary key default gen_random_uuid(),
     bucket_id text references storage.buckets (id),
-    name text not null
+    name text not null,
+    created_at timestamptz default now()
   );
   alter table storage.objects enable row level security;
   create function storage.foldername(name text) returns text[] language sql immutable as
@@ -76,7 +77,7 @@ await as(null, () => fails(commit(vault.id, [change('a.md', 'a', 0)]), /not auth
 await as(U1, async () => {
   const first = await commit(vault.id, [change('a.md', 'a', 0), change('b.md', 'b', 0)]);
   eq(first.map((r) => [r.ok, r.row.version, r.row.seq]), [[true, 1, 1], [true, 1, 2]], 'two new files: v1, seq 1 and 2');
-  eq(Object.keys(first[0].row).sort(), ['deleted', 'device_id', 'hash', 'mtime', 'path', 'seq', 'size', 'version'], 'row shape returned to the plugin');
+  eq(Object.keys(first[0].row).sort(), ['deleted', 'device_id', 'hash', 'mtime', 'name_enc', 'path', 'seq', 'size', 'version'], 'row shape returned to the plugin');
 
   const stale = await commit(vault.id, [change('a.md', 'c', 0)], 'B');
   eq([stale[0].ok, stale[0].row.version, stale[0].row.hash], [false, 1, H('a')], 'creating an existing path is refused with the current row');
@@ -119,7 +120,7 @@ await as(U2, async () => {
 await as(U1, async () => {
   await db.query(`insert into storage.objects (bucket_id, name) values ('vault-sync', '${U1}/${vault.id}/aa/x')`);
   eq((await db.query(`select name from storage.objects`)).rows.map((r) => r.name), [`${U1}/${vault.id}/aa/x`], 'each user lists only their own blobs');
-  eq((await db.query(`select public.vault_sync_schema_version() as v`)).rows[0].v, 1, 'schema version is readable');
+  eq((await db.query(`select public.vault_sync_schema_version() as v`)).rows[0].v, 2, 'schema version is readable');
 });
 
 // ── concurrent commits: seq never goes backwards ────────────────────────────
@@ -128,6 +129,70 @@ await as(U1, async () => {
   const results = await Promise.all(Array.from({ length: 10 }, (_, i) => commit(vault.id, [change(`c${i}.md`, 'f', 0)], `D${i}`)));
   const seqs = results.map((r) => r[0].row.seq).sort((a, b) => a - b);
   eq(seqs, Array.from({ length: 10 }, (_, i) => before + 1 + i), 'concurrent commits get consecutive seqs');
+});
+
+// ── relay: devices, deliveries, requests, garbage ───────────────────────────
+const rpc = async (fn, args) => (await db.query(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(', ')}) as r`, args)).rows[0].r;
+await as(U1, async () => {
+  const relay = (await db.query(`insert into public.vaults (name) values ('Relay') returning id`)).rows[0].id;
+  const alone = await rpc('register_device', [relay, 'A']);
+  eq(alone, { peers: 0, deliveries: [] }, 'a lone device has no peers and is owed nothing');
+  await commit(relay, [change('solo.md', 'a', 0)], 'A');
+  const admin = async (sql, params) => {
+    await db.exec(`reset role`);
+    try {
+      return await db.query(sql, params);
+    } finally {
+      await db.exec(`set role authenticated`);
+    }
+  };
+  eq((await admin(`select count(*)::int as n from public.deliveries`)).rows[0].n, 0, 'without peers a commit owes nothing to anyone');
+
+  eq((await rpc('register_device', [relay, 'B'])).peers, 1, 'a second device sees one peer');
+  eq((await rpc('register_device', [relay, 'A'])).peers, 1, 'and so does the first');
+  await commit(relay, [change('n.md', 'b', 0)], 'A');
+  eq((await rpc('register_device', [relay, 'B'])).deliveries, [{ hash: H('b'), path: 'n.md', name_enc: null }], 'B is owed the new blob');
+  eq((await rpc('register_device', [relay, 'A'])).deliveries, [], 'the committer is not');
+
+  await commit(relay, [change('n.md', 'c', 1)], 'A');
+  eq((await rpc('register_device', [relay, 'B'])).deliveries.map((d) => d.hash), [H('c')], 'a newer version replaces what B was owed');
+  await commit(relay, [change('n.md', 'd', 2)], 'B');
+  eq((await rpc('register_device', [relay, 'B'])).deliveries, [], "B's own commit clears what it was owed for that path");
+  eq((await rpc('register_device', [relay, 'A'])).deliveries.map((d) => d.hash), [H('d')], 'and owes A the new version');
+  eq(await rpc('ack_received', [relay, 'A', JSON.stringify([{ path: 'n.md', hash: H('d') }])]), 1, 'A acknowledges it');
+  eq((await rpc('register_device', [relay, 'A'])).deliveries, [], 'and is owed nothing');
+
+  await commit(relay, [change('t.md', 'e', 0)], 'A');
+  await commit(relay, [change('t.md', 'e', 1, true)], 'A');
+  eq((await rpc('register_device', [relay, 'B'])).deliveries, [], 'a tombstone cancels what was owed for the path');
+
+  const signal = async () => (await db.query(`select signal_device from public.vaults where id = $1`, [relay])).rows[0].signal_device;
+  eq(await rpc('request_blobs', [relay, 'B', JSON.stringify([{ path: 'solo.md', hash: H('a') }])]), 1, 'B asks for a blob no longer on the server');
+  eq(await signal(), 'B', 'which wakes the other devices');
+  eq(await rpc('open_requests', [relay, 'A']), [H('a')], 'A sees the request');
+  eq(await rpc('open_requests', [relay, 'B']), [], 'B does not see its own');
+  eq(await rpc('fulfil_requests', [relay, 'A', JSON.stringify([H('a')])]), 1, 'A uploads and fulfils it');
+  eq(await signal(), 'A', 'waking B');
+  eq((await rpc('register_device', [relay, 'B'])).deliveries, [{ hash: H('a'), path: 'solo.md', name_enc: null }], 'the request became a delivery');
+  eq(await rpc('open_requests', [relay, 'A']), [], 'and is no longer open');
+
+  const blob = (h) => `${U1}/${relay}/${h.slice(0, 2)}/${h}`;
+  await admin(`insert into storage.objects (bucket_id, name, created_at) values
+    ('vault-sync', $1, now() - interval '1 hour'), ('vault-sync', $2, now() - interval '1 hour'), ('vault-sync', $3, now())`, [blob(H('a')), blob(H('b')), blob(H('f'))]);
+  eq(await rpc('garbage_blobs', [relay, 600]), [blob(H('b'))], 'garbage: old blobs nobody is owed, not owed ones and not fresh uploads');
+  await rpc('ack_received', [relay, 'B', JSON.stringify([{ path: 'solo.md', hash: H('a') }])]);
+  eq((await rpc('garbage_blobs', [relay, 0])).sort(), [blob(H('a')), blob(H('b'))].sort(), 'once B has it, its blob is garbage too (grace never below a minute)');
+
+  await admin(`update public.devices set last_seen = now() - interval '31 days' where device_id = 'B'`);
+  await commit(relay, [change('late.md', 'a', 0)], 'A');
+  eq((await rpc('register_device', [relay, 'A'])).peers, 0, 'a device unseen for 30 days is forgotten, with what it was owed');
+  await fails(rpc('register_device', ['00000000-0000-0000-0000-000000000000', 'X']), /vault not found/, 'unknown vaults are refused');
+});
+await as(U2, async () => {
+  const id = vault.id;
+  await fails(rpc('register_device', [id, 'evil']), /vault not found/, "another user cannot join a vault");
+  await fails(rpc('garbage_blobs', [id, 600]), /vault not found/, "nor list its blobs");
+  await fails(db.query(`select * from public.deliveries`), /permission denied/, 'deliveries are not readable directly');
 });
 
 const pub = (await db.query(`select tablename from pg_publication_tables where pubname = 'supabase_realtime'`)).rows.map((r) => r.tablename);

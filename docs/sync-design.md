@@ -10,7 +10,7 @@ This note is for anyone changing `src/core`. It records the rules the sync relie
 - `vaults.head_seq` is the seq of the vault's latest commit.
 
 **Blobs**
-- Stored in the bucket at `<user>/<vault>/<id[0:2]>/<id>`.
+- In transit only (see Relay below). Stored in the bucket at `<user>/<vault>/<id[0:2]>/<id>`.
 - `id` is SHA-256 of the plain bytes. In an encrypted vault it is HMAC-SHA256 under a key derived from the passphrase.
 - Because blobs are content-addressed:
   - equal files are stored once;
@@ -97,6 +97,18 @@ These rules are why there is no journal and why a crash at any point is harmless
    - if it does not, the write is skipped and the next cycle merges instead.
 6. Server paths are NFC. Local paths are matched by key: NFC, plus lower case on case-insensitive file systems. On such a device, two server paths that differ only in case are both kept on the server; only the first one syncs, and the other is reported, never deleted.
 7. A state file is trusted only if its nonce matches the one in this device's local storage. A copied plugin folder therefore starts with first-sync rules, which never delete.
+
+## Relay (schema version 2)
+
+The server stores file contents only in transit.
+
+- `register_device` runs at the start of every cycle. It records the device as active, forgets devices unseen for 30 days (with everything owed to them), and returns the number of peers plus the deliveries owed to this device.
+- `commit_files` replaces, for every applied change to path P, the deliveries owed for P: each *other* device is now owed the new id; a tombstone owes nothing. The engine uploads a blob before committing only when it has peers, and never for the new half of a rename (the peers rename their own copy).
+- A device that cannot find a blob it needs (download, merge, conflict) records a request and leaves its base untouched, so the action is retried. `open_requests` shows other devices' requests; a device holding that content (by base id, re-verified) uploads it and calls `fulfil_requests`, which turns the requests into deliveries and wakes the asker through Realtime.
+- After acting, a device acknowledges every owed delivery it no longer needs: its base now has that id, the row moved on or was deleted, or the path is outside what it syncs.
+- Every few minutes a device calls `garbage_blobs`, which lists the vault's objects that no delivery refers to and that are older than a grace period (10 minutes, never less than one, so an upload about to be committed or fulfilled is not caught), and deletes them through the Storage API.
+- Merge bases live on each device (`BaseStore`, `<plugin>/base/<vault>/`), written whenever a mergeable file's base is set and pruned to the ids still in use. A merge whose base is missing locally falls back to a conflict copy.
+- Encrypted vaults: `EncryptedPathBackend` sends `path` as HMAC(path key, NFC path) and the real path sealed with AES-GCM in `name_enc`, bound to that id. The engine only ever sees real paths.
 
 ## Server rules (`supabase/schema.sql`)
 

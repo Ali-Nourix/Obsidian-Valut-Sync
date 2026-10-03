@@ -14,6 +14,7 @@ const mod = await loadTs(
   export { default as VaultSyncPlugin } from "./main";
   export { ObsidianVaultHost, probeCaseInsensitive } from "./src/obsidian/vault-host";
   export { AdapterStateStore } from "./src/obsidian/state-store";
+  export { AdapterBaseStore } from "./src/obsidian/base-store";
   export { DeviceStore } from "./src/obsidian/device-store";
   export { SyncEngine } from "./src/core/engine";
   export { MemoryBackend } from "./src/backend/memory-backend";
@@ -24,6 +25,7 @@ const mod = await loadTs(
 `,
   { obsidian: mockSource }
 );
+const { AdapterBaseStore } = mod;
 const { VaultSyncPlugin, ObsidianVaultHost, probeCaseInsensitive, AdapterStateStore, DeviceStore, SyncEngine, MemoryBackend, PlainCodec, MemoryVaultHost, Clock, utf8, decodeUtf8, obsidian } = mod;
 const { App, Vault, notices } = obsidian;
 
@@ -84,6 +86,20 @@ const manifest = { id: 'vault-sync', dir: '.obsidian/plugins/vault-sync', versio
   auth.setItem('s', 'token');
   eq(auth.getItem('s'), 'token', 'session storage');
   eq([...app.local.keys()].every((k) => k.startsWith('vault-sync:')), true, 'everything is namespaced');
+}
+
+// ── merge bases on disk ────────────────────────────────────────────────────
+{
+  const vault = new Vault();
+  const bases = new AdapterBaseStore(vault.adapter, manifest.dir, 'v1');
+  const a = 'ab'.repeat(32);
+  const b = 'cd'.repeat(32);
+  await bases.put(a, utf8('base a'));
+  await bases.put(b, utf8('base b'));
+  eq(decodeUtf8(await bases.get(a)), 'base a', 'a merge base is kept in the plugin folder');
+  eq(await bases.get('ef'.repeat(32)), null, 'an unknown base is null');
+  await bases.prune(new Set([b]));
+  eq([await bases.get(a), decodeUtf8(await bases.get(b))], [null, 'base b'], 'pruning keeps only bases still in use');
 }
 
 // ── vault host ─────────────────────────────────────────────────────────────

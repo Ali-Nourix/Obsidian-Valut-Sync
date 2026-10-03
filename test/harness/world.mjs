@@ -16,9 +16,12 @@ export const lib = await loadTs(`
   export { DEFAULT_SYNC_OPTIONS } from "./src/core/model";
   export { nfc, isConflictCopy } from "./src/core/paths";
   export { SyncLog } from "./src/core/sync-log";
+  export { MemoryBaseStore } from "./src/core/base-store";
+  export { PathCipher } from "./src/core/path-cipher";
+  export { EncryptedPathBackend } from "./src/backend/encrypted-paths";
 `);
 
-const { SyncEngine, MemoryBackend, MemoryVaultHost, Clock, PlainCodec, EncryptedCodec, createEncryption, utf8, decodeUtf8, DEFAULT_SYNC_OPTIONS, nfc, SyncLog } = lib;
+const { SyncEngine, MemoryBackend, MemoryVaultHost, Clock, PlainCodec, EncryptedCodec, createEncryption, utf8, decodeUtf8, DEFAULT_SYNC_OPTIONS, nfc, SyncLog, MemoryBaseStore, PathCipher, EncryptedPathBackend } = lib;
 
 export class MemoryStore {
   saved = null;
@@ -39,25 +42,32 @@ export class MemoryStore {
 
 export async function makeWorld({ encrypted = false } = {}) {
   const clock = new Clock();
-  const backend = new MemoryBackend();
+  // The server: no grace before garbage collection, so tests see it at once.
+  const server = new MemoryBackend({ now: clock.now, garbageGraceMs: 0 });
   let codec = new PlainCodec();
   let header = null;
+  let backend = server;
+  let pathCipher = null;
   if (encrypted) {
     const made = await createEncryption('correct horse', 1000);
     header = made.header;
     codec = await EncryptedCodec.fromMaster(made.master);
+    pathCipher = await PathCipher.fromMaster(made.master);
+    backend = new EncryptedPathBackend(server, pathCipher);
   }
-  const vault = await backend.createVault('Main', header);
-  return { clock, backend, codec, vaultId: vault.id };
+  const vault = await server.createVault('Main', header);
+  return { clock, backend, server, codec, pathCipher, vaultId: vault.id };
 }
 
 export function device(world, name, { ci = false, nfd = false, userId = 'user-1' } = {}) {
   const host = new MemoryVaultHost(world.clock, ci, nfd);
   const store = new MemoryStore();
+  const baseStore = new MemoryBaseStore();
   const dev = {
     name,
     host,
     store,
+    baseStore,
     log: new SyncLog(1000, world.clock.now),
     options: { ...DEFAULT_SYNC_OPTIONS },
     engine: null,
@@ -76,6 +86,8 @@ export function device(world, name, { ci = false, nfd = false, userId = 'user-1'
       log: dev.log,
       concurrency: 2,
       options: () => dev.options,
+      baseStore,
+      gcIntervalMs: 0,
     });
   };
   dev.restart();
@@ -100,7 +112,8 @@ export function device(world, name, { ci = false, nfd = false, userId = 'user-1'
   return dev;
 }
 
-const changed = (r) => r.uploaded || r.downloaded || r.deletedLocal || r.deletedRemote || r.renamed || r.merged.length || r.conflicts.length;
+const changed = (r) =>
+  r.uploaded || r.downloaded || r.deletedLocal || r.deletedRemote || r.renamed || r.merged.length || r.conflicts.length || r.waiting || r.served;
 
 /** Syncs every device in turn until a whole round changes nothing. Returns the reports. */
 export async function settle(devices, maxRounds = 8) {
@@ -131,10 +144,18 @@ export function snapshot(dev) {
 export function assertConverged(world, devices, eq, label) {
   const first = snapshot(devices[0]);
   for (const dev of devices.slice(1)) eq(snapshot(dev), first, `${label}: ${dev.name} matches ${devices[0].name}`);
-  eq(
-    world.backend.liveRows(world.vaultId).map((r) => r.path).sort(),
-    Object.keys(first).sort(),
-    `${label}: server holds the same files`
-  );
+  const live = world.server.liveRows(world.vaultId);
+  if (!world.server.vaults.get(world.vaultId).vault.encryption) {
+    eq(live.map((r) => r.path).sort(), Object.keys(first).sort(), `${label}: server index lists the same files`);
+  } else {
+    eq(live.length, Object.keys(first).length, `${label}: server index has as many files`);
+  }
   return first;
+}
+
+/** The live paths in the server's index, decrypted when the vault is encrypted. */
+export async function serverPaths(world) {
+  const rows = world.server.liveRows(world.vaultId);
+  if (!world.pathCipher) return rows.map((r) => r.path);
+  return (await Promise.all(rows.map((r) => world.pathCipher.open(r.sealedName, r.path)))).sort();
 }

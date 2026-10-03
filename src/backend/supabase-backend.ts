@@ -10,10 +10,12 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { EncryptionHeader, isEncryptionHeader } from '../core/crypto';
 import { toArrayBuffer } from '../core/bytes';
 import { RemoteRow } from '../core/model';
-import { BackendError, BackendErrorKind, CommitChange, CommitResult, RemoteBackend, RemoteVault } from './remote-backend';
+import { BackendError, BackendErrorKind, BlobRef, CheckIn, CommitChange, CommitResult, RemoteBackend, RemoteVault } from './remote-backend';
 
 export const BUCKET = 'vault-sync';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+/** How long a blob nobody is owed stays before it is collected (the server never goes below a minute). */
+export const GARBAGE_GRACE_SECONDS = 600;
 
 interface ErrorLike {
   message?: string;
@@ -59,10 +61,11 @@ interface FileRecord {
   seq: number | string;
   deleted: boolean;
   device_id: string | null;
+  name_enc?: string | null;
 }
 
 const VAULT_COLUMNS = 'id,name,encryption,head_seq,head_device';
-const FILE_COLUMNS = 'path,hash,size,mtime,version,seq,deleted,device_id';
+const FILE_COLUMNS = 'path,hash,size,mtime,version,seq,deleted,device_id,name_enc';
 
 function toVault(record: VaultRecord): RemoteVault {
   return {
@@ -84,6 +87,7 @@ function toRow(record: FileRecord): RemoteRow {
     seq: Number(record.seq),
     deleted: record.deleted,
     device: record.device_id,
+    sealedName: record.name_enc ?? null,
   };
 }
 
@@ -142,6 +146,7 @@ export class SupabaseBackend implements RemoteBackend {
       mtime: Math.round(c.mtime),
       deleted: c.deleted,
       expected_version: c.expectedVersion,
+      name_enc: c.sealedName ?? null,
     }));
     const { data, error, status } = await this.client.rpc('commit_files', { p_vault: vaultId, p_device: deviceId, p_changes });
     if (error) throw toBackendError(error, status);
@@ -168,12 +173,55 @@ export class SupabaseBackend implements RemoteBackend {
     return new Uint8Array(await data.arrayBuffer());
   }
 
+  private async call<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+    const { data, error, status } = await this.client.rpc(fn, args);
+    if (error) throw toBackendError(error, status);
+    return data as T;
+  }
+
+  async registerDevice(vaultId: string, deviceId: string): Promise<CheckIn> {
+    const data = await this.call<{ peers: number; deliveries: Array<{ path: string; hash: string; name_enc: string | null }> }>('register_device', {
+      p_vault: vaultId,
+      p_device: deviceId,
+    });
+    return { peers: data.peers, deliveries: data.deliveries.map((d) => ({ path: d.path, hash: d.hash, sealedName: d.name_enc })) };
+  }
+
+  async ackReceived(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void> {
+    for (let i = 0; i < items.length; i += 500) {
+      await this.call('ack_received', { p_vault: vaultId, p_device: deviceId, p_items: items.slice(i, i + 500) });
+    }
+  }
+
+  async requestBlobs(vaultId: string, deviceId: string, items: BlobRef[]): Promise<void> {
+    for (let i = 0; i < items.length; i += 500) {
+      await this.call('request_blobs', { p_vault: vaultId, p_device: deviceId, p_items: items.slice(i, i + 500) });
+    }
+  }
+
+  openRequests(vaultId: string, deviceId: string): Promise<string[]> {
+    return this.call<string[]>('open_requests', { p_vault: vaultId, p_device: deviceId });
+  }
+
+  async fulfilRequests(vaultId: string, deviceId: string, hashes: string[]): Promise<void> {
+    if (hashes.length) await this.call('fulfil_requests', { p_vault: vaultId, p_device: deviceId, p_hashes: hashes });
+  }
+
+  async collectGarbage(vaultId: string, graceSeconds = GARBAGE_GRACE_SECONDS): Promise<number> {
+    const names = await this.call<string[]>('garbage_blobs', { p_vault: vaultId, p_grace_seconds: graceSeconds });
+    for (let i = 0; i < names.length; i += 100) {
+      const { error } = await this.client.storage.from(BUCKET).remove(names.slice(i, i + 100));
+      if (error) throw toBackendError(error);
+    }
+    return names.length;
+  }
+
   subscribe(vaultId: string, onHead: (headSeq: number, device: string | null) => void, onStatus?: (status: string) => void): () => void {
     const channel = this.client
       .channel(`vault-sync:${vaultId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vaults', filter: `id=eq.${vaultId}` }, (payload) => {
-        const row = payload.new as Partial<VaultRecord>;
-        if (row.head_seq !== undefined) onHead(Number(row.head_seq), row.head_device ?? null);
+        const row = payload.new as Partial<VaultRecord> & { signal_device?: string | null };
+        if (row.head_seq !== undefined) onHead(Number(row.head_seq), row.signal_device ?? row.head_device ?? null);
       })
       .subscribe((status) => onStatus?.(status));
     return () => {

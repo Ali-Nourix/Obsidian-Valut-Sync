@@ -94,6 +94,14 @@ export async function contentKeys(master: Uint8Array): Promise<ContentKeys> {
   return { aes, hmac };
 }
 
+/** Separate keys for file names, so a name's id never equals any content id. */
+export async function pathKeys(master: Uint8Array): Promise<ContentKeys> {
+  const base = await hkdfBase(master);
+  const aes = await subtle().deriveKey(hkdfParams('vault-sync/path-aes-gcm'), base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  const hmac = await subtle().deriveKey(hkdfParams('vault-sync/path-hmac'), base, { name: 'HMAC', hash: 'SHA-256', length: 256 }, false, ['sign']);
+  return { aes, hmac };
+}
+
 export async function hmacHex(key: CryptoKey, bytes: Uint8Array): Promise<string> {
   return toHex(new Uint8Array(await subtle().sign('HMAC', key, toArrayBuffer(bytes))));
 }
