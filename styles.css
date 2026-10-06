@@ -1,0 +1,106 @@
+/* ── Vault Sync ─────────────────────────────────────────────────────────── */
+
+.vault-sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+}
+
+.vault-sync-status__icon {
+  display: inline-flex;
+}
+
+.vault-sync-status__icon svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.vault-sync-status__icon.is-spinning svg {
+  animation: vault-sync-spin 1.2s linear infinite;
+}
+
+@keyframes vault-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-sync-status__icon.is-spinning svg {
+    animation: none;
+  }
+}
+
+.vault-sync-section {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-6);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: var(--size-4-1);
+}
+
+.vault-sync-section h3 {
+  margin: 0;
+}
+
+.vault-sync-section__icon {
+  display: inline-flex;
+  color: var(--text-accent);
+}
+
+.vault-sync-section__desc {
+  margin-top: var(--size-4-2);
+}
+
+.vault-sync-warning {
+  color: var(--text-warning);
+}
+
+.vault-sync-paths {
+  max-height: 12em;
+  overflow-y: auto;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
+.vault-sync-log-modal .modal {
+  width: min(52rem, 95vw);
+}
+
+.vault-sync-log {
+  max-height: 60vh;
+  overflow-y: auto;
+  font-size: var(--font-ui-smaller);
+}
+
+.vault-sync-log__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  padding: var(--size-2-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.vault-sync-log__time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-sync-log__kind {
+  font-weight: var(--font-semibold);
+}
+
+.vault-sync-log__row--error .vault-sync-log__kind,
+.vault-sync-log__row--conflict .vault-sync-log__kind {
+  color: var(--text-error);
+}
+
+.vault-sync-log__path {
+  font-family: var(--font-monospace);
+  overflow-wrap: anywhere;
+}
+
+.vault-sync-log__detail {
+  color: var(--text-muted);
+}
