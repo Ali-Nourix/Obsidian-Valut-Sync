@@ -1,0 +1,15 @@
+{
+  "name": "vault-sync-installer",
+  "main": "installer/cloudflare.mjs",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "INSTALLER_PUBLIC_URL": "https://vault-sync-installer.alinorizadeh1384.workers.dev",
+    "INSTALLER_ALLOW_PROJECT_CREATION": "false"
+  },
+  "durable_objects": { "bindings": [{ "name": "INSTALLER_COORDINATOR", "class_name": "InstallerCoordinator" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstallerCoordinator"] }]
+}

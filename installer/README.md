@@ -22,7 +22,30 @@ This service is an **installer**, not a sync relay. Notes go directly between th
 6. Disable request-body, Authorization-header, callback-query and token-response logging at every proxy/hosting layer. Browser approval codes are sensitive, one-use and short-lived. Do not enable APM request capture for these routes.
 7. Configure the installer HTTPS URL in the preview plugin. Complete the flow with a throwaway project/user first. Never begin with a production website's shared project.
 
-There is no hard-coded maintainer host, OAuth secret, PAT, service-role key or user account. Until steps 1–7 are complete, **Connect Supabase will not be a functioning live integration**. This change has not registered an OAuth app or deployed the service.
+The Release plugin now includes the public address `https://vault-sync-installer.alinorizadeh1384.workers.dev` as its default installer. This is a public service URL, **not a credential**. Existing settings with an empty installer URL use this default; a nonempty user override is preserved. There is no embedded OAuth secret, PAT, service-role key or user account.
+
+### Hosted Cloudflare deployment
+
+The Worker and a single SQLite-backed Durable Object namespace have been deployed. `/health` is reachable, but reports `ready: false` until the operator supplies a registered OAuth app's credentials. **Deployment does not mean OAuth activation.** OAuth app registration, credential setup and a real end-to-end install still need completion.
+
+The Durable Object coordinates all sessions so requests do not depend on arbitrary Worker-isolate routing. Session credentials remain **memory-only**. Only a cleanup deadline is written to storage. A restart or eviction drops pending sessions safely and users must reconnect. Completed SQL/account changes are not rolled back.
+
+To reproduce deployment, adapt the public URL to your own host, then:
+
+```bash
+node installer/build-cloudflare.mjs
+npx wrangler deploy --config wrangler.jsonc
+npx wrangler secret put SUPABASE_OAUTH_CLIENT_ID
+npx wrangler secret put SUPABASE_OAUTH_CLIENT_SECRET
+```
+
+Run the secret commands interactively on a trusted computer; never put values in source, command arguments, logs or issues. The app callback must exactly match `https://vault-sync-installer.alinorizadeh1384.workers.dev/oauth/callback` for the current deployment. For a different host, change both the callback and public URL. Publish/enable the OAuth app for other organizations as required by Supabase.
+
+For existing-project setup the scope requirements are **Projects Read**, **Database Write**, **Secrets Read**, and **Auth Write** only if allowing users to close sign-ups. Project creation remains disabled; do not request Projects Write or Organizations Read solely for unused creation. Scopes are configured in the OAuth app, not added to the authorization URL.
+
+Worker observability and Logpush are disabled. Do not enable tail/APM/request capture for callback or installer routes. Cloudflare still processes network traffic and manages platform data; this is not a claim that the provider records nothing. Start rate limiting uses Cloudflare's ingress IP rather than client-supplied forwarded headers, with a bounded global coordinator. Deployment uses existing account limits and does not upgrade the account plan. Review usage quotas before wider rollout.
+
+`node --test test/installer.mjs test/cloudflare-installer.mjs` runs 17 local tests, including the Fetch adapter, unconfigured fail-closed state, host/origin validation, PKCE/session protection, body limits and ingress rate limiting. These are not proof of live OAuth or a completed Supabase installation.
 
 ## User flow
 
@@ -36,8 +59,8 @@ There is no hard-coded maintainer host, OAuth secret, PAT, service-role key or u
 
 ## Limits and production checklist
 
-- Single instance only: session state is in memory. A restart loses pending sessions safely. Multiple replicas need a reviewed encrypted session store, replay protection and shared rate limiting before use; sticky sessions alone do not supply the other protections.
-- Start rate limiting (10 sessions/minute/IP and 200 concurrent sessions) is intentionally small. Behind a proxy it may count the proxy IP; configure a proper edge rate limiter without trusting arbitrary forwarded headers in this service.
+- Node deployment: single instance only; session state is in memory. Cloudflare deployment routes through one Durable Object coordinator. A restart loses pending sessions safely. Multiple replicas need a reviewed encrypted session store, replay protection and shared rate limiting before use; sticky sessions alone do not supply the other protections.
+- Start rate limiting (10 sessions/minute/IP and 200 concurrent sessions) is intentionally small. In the Node deployment, a proxy may make it count the proxy IP; configure a proper edge rate limiter without trusting arbitrary forwarded headers in this service.
 - No automatic SQL rollback or account/project deletion after partial failure. Retry with a new authorization; collision/version checks protect known installs. Never reset an existing account password as recovery.
 - No OAuth refresh tokens are stored. Expired/missing permissions require reconnecting. The user can revoke the integration in Supabase afterwards; dropping local tokens is not the same as revoking a provider grant.
 - No live Supabase OAuth/API calls were made in local tests. Full repository build/sync tests and real desktop/mobile/browser return testing are still required before publishing a release.

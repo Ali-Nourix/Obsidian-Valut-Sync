@@ -4,6 +4,7 @@
 // storage (see obsidian/device-store.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { DEFAULT_INSTALLER_URL } from './onboarding/client';
 import { EncryptionHeader } from './core/crypto';
 
 export type Language = 'en' | 'fa';
@@ -35,7 +36,7 @@ export interface VaultSyncSettings {
 
 export const DEFAULT_SETTINGS: VaultSyncSettings = {
   language: 'en',
-  installerUrl: '',
+  installerUrl: DEFAULT_INSTALLER_URL,
   supabaseUrl: '',
   supabaseKey: '',
   email: '',

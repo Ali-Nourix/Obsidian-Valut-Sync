@@ -1,5 +1,5 @@
 import { App, Modal, Notice, requestUrl, Setting } from 'obsidian';
-import { InstallerClient, SetupOrganization, SetupProject, SetupResult } from '../onboarding/client';
+import { DEFAULT_INSTALLER_URL, InstallerClient, SetupOrganization, SetupProject, SetupResult } from '../onboarding/client';
 import { watchSetupReturn } from '../onboarding/return-channel';
 import type { RemoteVault } from '../backend/remote-backend';
 
@@ -75,6 +75,7 @@ export class SupabaseSetupModal extends Modal {
       conflicting_tables: ['This project has conflicting tables. Use a dedicated empty project.', 'این پروژه جدول‌های هم‌نام دارد؛ یک پروژهٔ اختصاصی خالی انتخاب کنید.'],
       project_not_ready: ['Project is not ACTIVE_HEALTHY yet. Wait and reconnect.', 'پروژه هنوز ACTIVE_HEALTHY نیست؛ صبر کنید و دوباره متصل شوید.'],
       session_expired: ['Connection expired. Start a new connection.', 'اتصال منقضی شد؛ اتصال جدید بسازید.'],
+      installer_not_configured: ['The installer is online, but its operator still needs to configure the Supabase OAuth app. Use manual setup until then.', 'سرویس نصب آنلاین است، اما نگه‌دارنده هنوز باید اپ OAuth در Supabase را تنظیم کند. تا آن زمان از نصب دستی استفاده کنید.'],
       installer_unreachable: ['Cannot reach the installer. Check its URL and your connection.', 'سرویس نصب در دسترس نیست؛ آدرس و اتصال را بررسی کنید.'],
       trusted_installer_required: ['Configure and approve a trusted installer first.', 'ابتدا آدرس سرویس نصب مورد اعتماد را تنظیم و تأیید کنید.'],
       invalid_browser_confirmation: ['Browser confirmation failed. Use the return button or the correct one-time code.', 'تأیید مرورگر ناموفق بود؛ دکمهٔ بازگشت یا کد یک‌بارمصرف صحیح را استفاده کنید.'],
@@ -110,7 +111,7 @@ export class SupabaseSetupModal extends Modal {
     el.createEl('p', { text: this.t('Your notes stay in your own Supabase project. This installer only prepares it.', 'یادداشت‌ها در پروژهٔ Supabase خودتان می‌مانند. این سرویس فقط راه‌اندازی را انجام می‌دهد.') });
     if (this.error) el.createEl('p', { cls: 'vault-sync-warning', text: this.t('Setup stopped: ', 'راه‌اندازی متوقف شد: ') + this.explain(this.error) });
     if (this.phase === 'start') {
-      const url = this.host.settings.installerUrl;
+      const url = this.host.settings.installerUrl.trim() || DEFAULT_INSTALLER_URL;
       el.createEl('p', { text: this.t('Installer service: ', 'سرویس نصب: ') + (url || this.t('Not configured by the maintainer', 'توسط نگه‌دارنده تنظیم نشده است')) });
       el.createEl('p', { text: this.t('Only use an installer you trust: it temporarily handles project administration and your sync password. Do not enter your Supabase dashboard password.', 'فقط به سرویس نصب مورد اعتماد متصل شوید؛ این سرویس موقتاً عملیات مدیریتی و رمز حساب sync را پردازش می‌کند. رمز حساب اصلی Supabase را وارد نکنید.') });
       this.toggle(this.t('I trust this installer service', 'به این سرویس نصب اعتماد دارم'), this.trustInstaller, v => { this.trustInstaller = v; });

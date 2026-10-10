@@ -8,7 +8,7 @@ import { App, Notice, PluginSettingTab, Setting, setIcon } from 'obsidian';
 import type VaultSyncPlugin from '../../main';
 import { RemoteVault } from '../backend/remote-backend';
 import { keyProblem } from '../backend/supabase-client';
-import { installerOrigin } from '../onboarding/client';
+import { DEFAULT_INSTALLER_URL, installerOrigin } from '../onboarding/client';
 import { SupabaseSetupModal } from './setup-modal';
 import { normalizeFolder } from '../core/paths';
 import { timeAgo } from '../localization/labels';
@@ -83,8 +83,8 @@ export class VaultSyncSettingTab extends PluginSettingTab {
     const fa = settings.language === 'fa';
     new Setting(containerEl)
       .setName(fa ? 'سرویس نصب خودکار (نسخهٔ آزمایشی)' : 'Automatic setup service (preview)')
-      .setDesc(fa ? 'فقط آدرس HTTPS سرویس مورد اعتماد نگه‌دارنده؛ نه توکن یا رمز. برای نسخهٔ آزمایشی باید سرویس جداگانه تنظیم شود.' : 'Trusted maintainer HTTPS service URL only, not a token or password. The separate installer must be configured for this preview.')
-      .addText(text => text.setPlaceholder('https://installer.example.org').setValue(settings.installerUrl).onChange(async value => {
+      .setDesc(fa ? 'فقط آدرس HTTPS سرویس مورد اعتماد نگه‌دارنده؛ نه توکن یا رمز. آدرس پیش‌فرض سرویس نصب موجود است؛ OAuth باید توسط نگه‌دارنده فعال شود. خالی‌گذاشتن، آدرس پیش‌فرض را استفاده می‌کند.' : 'Trusted maintainer HTTPS service URL only, not a token or password. A hosted default is provided; the operator must activate OAuth. Leave empty to use the default.')
+      .addText(text => text.setPlaceholder(DEFAULT_INSTALLER_URL).setValue(settings.installerUrl).onChange(async value => {
         try { settings.installerUrl = value.trim() ? installerOrigin(value) : ''; }
         catch { return; }
         await plugin.saveSettings();

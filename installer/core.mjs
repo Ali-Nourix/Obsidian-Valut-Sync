@@ -15,7 +15,7 @@ const validEmail = (email) => typeof email === 'string' && email.length <= 254 &
 
 /** In-memory, single-instance OAuth installer. Never use these secrets in the plugin. */
 export function createInstaller({ clientId, clientSecret, publicUrl, schema, fetchImpl = fetch,
-  now = Date.now, allowProjectCreation = false, sessionTtlMs = TTL }) {
+  now = Date.now, allowProjectCreation = false, sessionTtlMs = TTL, waitUntil = () => {} }) {
   const base = new URL(publicUrl);
   if (base.username || base.password || base.search || base.hash || base.pathname !== '/') fail('invalid_public_url');
   const loopback = ['localhost', '127.0.0.1'].includes(base.hostname);
@@ -192,6 +192,7 @@ export function createInstaller({ clientId, clientSecret, publicUrl, schema, fet
       if (url.pathname === '/health' && req.method === 'GET') return json(res, 200, { ready: true, protocol: 1, allowProjectCreation });
       if (url.pathname === '/v1/sessions' && req.method === 'POST') {
         const ip = req.socket.remoteAddress ?? 'unknown';
+        if (!rate.has(ip) && rate.size >= 10_000) fail('try_later', 429);
         const r = rate.get(ip) ?? { count: 0, until: now() + 60_000 };
         if (++r.count > 10 || sessions.size >= 200) fail('try_later', 429);
         rate.set(ip, r);
@@ -292,7 +293,8 @@ export function createInstaller({ clientId, clientSecret, publicUrl, schema, fet
         // Serialize concurrent requests including awaits above.
         connected(s);
         s.busy = true; s.status = 'installing'; s.progress = []; s.error = null;
-        void install(s, input);
+        const task = install(s, input);
+        waitUntil(task); // Keep async installation alive in serverless runtimes.
         return json(res, 202, { accepted: true });
       }
       fail('method_not_allowed', 405);

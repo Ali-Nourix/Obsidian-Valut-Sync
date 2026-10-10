@@ -1,3 +1,6 @@
+/** Public installer address only. OAuth secrets are server-side bindings. */
+export const DEFAULT_INSTALLER_URL = 'https://vault-sync-installer.alinorizadeh1384.workers.dev';
+
 export type SetupStatus = 'pending' | 'awaiting-confirmation' | 'connected' | 'installing' | 'complete' | 'failed';
 export interface SetupProject { ref: string; name: string; status: string; region?: string; }
 export interface SetupOrganization { slug: string; name: string; }
@@ -57,6 +60,7 @@ export class InstallerClient {
   }
   async health(): Promise<{ allowProjectCreation: boolean }> {
     const h = await this.request('/health');
+    if (h?.protocol === 1 && h.ready === false && h.error === 'installer_not_configured') throw new Error('installer_not_configured');
     if (h?.protocol !== 1 || h.ready !== true) throw new Error('unsupported_installer');
     return { allowProjectCreation: h.allowProjectCreation === true };
   }
