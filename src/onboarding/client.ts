@@ -1,5 +1,5 @@
 /** Public installer address only. OAuth secrets are server-side bindings. */
-export const DEFAULT_INSTALLER_URL = 'https://vault-sync-installer.alinorizadeh1384.workers.dev';
+export const DEFAULT_INSTALLER_URL = ''; // No maintainer service is used by direct setup.
 
 export type SetupStatus = 'pending' | 'awaiting-confirmation' | 'connected' | 'installing' | 'complete' | 'failed';
 export interface SetupProject { ref: string; name: string; status: string; region?: string; }

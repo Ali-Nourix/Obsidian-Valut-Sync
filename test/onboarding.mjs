@@ -116,9 +116,9 @@ test('wizard renders Persian and clears all secret inputs on close', () => {
   modal.onOpen();
   assert.equal(modal.titleEl.text, 'راه‌اندازی Supabase شخصی');
   assert.ok(modal.contentEl.controls.some(c => c.label === 'اتصال به Supabase'));
-  modal.password = 'fixture-secret'; modal.passphrase = 'fixture-encryption'; modal.databasePassword = 'fixture-db'; modal.browserCode = approval;
+  modal.password = 'fixture-secret'; modal.passphrase = 'fixture-encryption'; modal.pat = 'sbp_fc_fixture_scoped_token';
   modal.onClose();
-  for (const key of ['password', 'passphrase', 'databasePassword', 'browserCode']) assert.equal(modal[key], '');
+  for (const key of ['password', 'passphrase', 'pat']) assert.equal(modal[key], '');
 });
 
 test('existing vault is selectable locally without sending its encryption passphrase to installer', async () => {
