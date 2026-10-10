@@ -8,7 +8,7 @@
 
 [![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED?style=for-the-badge&logo=obsidian&logoColor=white)](https://obsidian.md)
 [![Supabase](https://img.shields.io/badge/Backend-Your%20Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
-[![License](https://img.shields.io/badge/License-MIT-2F80ED?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-46A171?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Desktop%20%2B%20Mobile-343A40?style=for-the-badge)](https://github.com/Ali-Nourix/Obsidian-Valut-Sync)
 
 **Desktop + Mobile · فارسی / English · رمزنگاری اختیاری · مدیریت تعارض**
@@ -159,4 +159,4 @@ npm run preview:onboarding
 
 ## مجوز
 
-[MIT](LICENSE)
+[GNU General Public License v3.0](LICENSE)
