@@ -2,7 +2,7 @@
 
 # Vault Sync
 
-[English](README.en.md) · [فارسی](README.md)
+[English](README.en.md)
 
 **والت شما. Supabase شما. دستگاه‌های شما.**
 
@@ -21,7 +21,7 @@
 
 ---
 
- > شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
+> شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
 
 ## نصب پلاگین
 
@@ -38,8 +38,8 @@
 **برای build شاخهٔ فعلی**، Node.js **22+** لازم است:
 
 ```bash
-git clone --branch Release https://github.com/Ali-Nourix/Valut-Sync.git
-cd Valut-Sync
+git clone --branch Release https://github.com/Ali-Nourix/Obsidian-Valut-Sync.git
+cd Obsidian-Valut-Sync
 npm ci
 npm run build
 ```
@@ -147,7 +147,7 @@ npm run build
 | ورود ناموفق است | ایمیل و رمز حساب sync را بررسی کنید، نه حساب داشبورد Supabase |
 | فایل‌ها در راه‌اند | Obsidian را روی دستگاه قبلی باز کنید تا فایل‌ها ارسال شوند |
 
-برای گزارش مشکل از [Issues](https://github.com/Ali-Nourix/Valut-Sync/issues) استفاده کنید؛ اطلاعات حساس نفرستید.
+برای گزارش مشکل از [Issues](https://github.com/Ali-Nourix/Obsidian-Valut-Sync/issues) استفاده کنید؛ اطلاعات حساس نفرستید.
 
 ## توسعه
 
