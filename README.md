@@ -6,17 +6,20 @@
 
 همگام‌سازی یادداشت‌ها و فایل‌های Obsidian بین گوشی و کامپیوتر، با پروژهٔ شخصی Supabase.
 
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.8.7%2B-7C3AED?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
-[![Supabase](https://img.shields.io/badge/Backend-Your%20Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com)
-[![MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
+[![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED?style=for-the-badge&logo=obsidian&logoColor=white)](https://obsidian.md)
+[![Supabase](https://img.shields.io/badge/Backend-Your%20Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
+[![License](https://img.shields.io/badge/License-MIT-2F80ED?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Desktop%20%2B%20Mobile-343A40?style=for-the-badge)](https://github.com/Ali-Nourix/Obsidian-Valut-Sync)
 
 **Desktop + Mobile · فارسی / English · رمزنگاری اختیاری · مدیریت تعارض**
 
-[نصب](#installation) · [راه‌اندازی](#setup) · [تصاویر](#screenshots) · [امنیت](#security)
+[**نصب**](#installation) · [**راه‌اندازی**](#setup) · [**تصاویر**](#screenshots) · [**امنیت**](#security)
 
 </div>
 
-> شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
+---
+
+> شاخهٔ `Release`> شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
 
 ## نصب پلاگین
 
@@ -39,7 +42,7 @@ npm ci
 npm run build
 ```
 
-بعد همان سه فایل را به پوشهٔ پلاگین کپی کنید. ZIP گزینهٔ **Code → Download ZIP** سورس است، نه بستهٔ آمادهٔ نصب. تا وقتی مخزن خصوصی است، دریافت سورس به دسترسی GitHub نیاز دارد.
+بعد همان سه فایل را به پوشهٔ پلاگین کپی کنید. ZIP گزینهٔ **Code → Download ZIP** سورس است، نه بستهٔ آمادهٔ نصب. از آنجا که مخزن عمومی است، سورس از طریق GitHub قابل دریافت است.
 
 ## راه‌اندازی — فقط روی دستگاه اول
 
