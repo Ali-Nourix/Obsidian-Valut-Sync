@@ -25,6 +25,14 @@ Supabase is used as a **relay, not as storage**: a file's content stays on the s
 - **Optional end-to-end encryption**: AES-256-GCM, with a key from your passphrase via PBKDF2 (600 000 iterations). Contents and file names are both unreadable to the server.
 - **English and Persian** interface.
 
+## Automatic setup preview (`Release` branch)
+
+An English/Persian setup wizard is available on this branch: connect Supabase in your browser, return to the same Obsidian device, choose a dedicated project, install the backend and create/reuse your sync account, then choose/create a remote vault. No SQL editor or terminal is required for the end user **after the installer service is hosted and configured**.
+
+This is not a live hosted integration yet. The maintainer must register a Supabase OAuth app and deploy the separate installer. Read [installer/README.md](installer/README.md). In plugin settings, enter the trusted installer HTTPS URL and select **Set up Supabase automatically**. Never paste management tokens into normal plugin settings. Existing accounts are never silently password-reset. Project creation is disabled by default and requires explicit organization/cost consent when enabled.
+
+Manual setup below remains available and does not require trusting a third-party installer. Use Node.js 22+ for development; after this branch's project-scoped session change, sign in again on each device.
+
 ## Setup
 
 1. **Create a Supabase project** at [supabase.com](https://supabase.com). The free tier is plenty: the server only ever holds files in transit.

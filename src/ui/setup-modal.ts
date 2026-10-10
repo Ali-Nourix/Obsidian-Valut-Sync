@@ -1,0 +1,287 @@
+import { App, Modal, Notice, requestUrl, Setting } from 'obsidian';
+import { InstallerClient, SetupOrganization, SetupProject, SetupResult } from '../onboarding/client';
+import { watchSetupReturn } from '../onboarding/return-channel';
+import type { RemoteVault } from '../backend/remote-backend';
+
+interface SetupHost {
+  settings: { language: 'en' | 'fa'; installerUrl: string };
+  applySetupResult(result: SetupResult, password: string): Promise<void>;
+  createVault(name: string, passphrase: string | null, remember: boolean): Promise<void>;
+  listVaults(): Promise<RemoteVault[]>;
+  chooseVault(vault: RemoteVault | null): Promise<void>;
+  unlockVault(passphrase: string, remember: boolean): Promise<boolean>;
+}
+
+/** OAuth in the system browser; project/admin secrets never enter this modal. */
+export class SupabaseSetupModal extends Modal {
+  private client: InstallerClient | null = null;
+  private alive = true;
+  private busy = false;
+  private phase: 'start' | 'authorizing' | 'project' | 'confirm' | 'installing' | 'vault' | 'done' = 'start';
+  private projects: SetupProject[] = [];
+  private organizations: SetupOrganization[] = [];
+  private allowCreation = false;
+  private selected = '';
+  private showCreate = false;
+  private projectName = 'Vault Sync';
+  private confirmName = '';
+  private organization = '';
+  private region = 'emea';
+  private databasePassword = '';
+  private acceptCosts = false;
+  private email = '';
+  private password = '';
+  private passwordAgain = '';
+  private confirmRef = '';
+  private dedicated = false;
+  private closeSignups = false;
+  private accountMode: 'create' | 'existing' = 'create';
+  private remoteVaults: RemoteVault[] = [];
+  private remoteSelected = '';
+  private vaultAction: 'create' | 'choose' = 'create';
+  private vaultName = 'My vault';
+  private encrypt = true;
+  private passphrase = '';
+  private passphraseAgain = '';
+  private trustInstaller = false;
+  private browserCode = '';
+  private stopReturn: (() => void) | null = null;
+  private poll: number | null = null;
+  private progress = '';
+  private error = '';
+  private result: SetupResult | null = null;
+
+  constructor(app: App, private readonly host: SetupHost, private readonly onDone: () => void) { super(app); }
+  private t(en: string, fa: string): string { return this.host.settings.language === 'fa' ? fa : en; }
+  onOpen(): void {
+    this.alive = true;
+    this.stopReturn = watchSetupReturn(async (session, approval) => {
+      if (!this.alive || !this.client?.ownsSession(session)) return;
+      try { await this.client.confirmBrowser(approval); await this.pollState(); }
+      catch { if (this.alive) { this.error = 'invalid_browser_confirmation'; this.render(); } }
+    });
+    this.modalEl.setAttr('dir', this.host.settings.language === 'fa' ? 'rtl' : 'ltr');
+    this.titleEl.setText(this.t('Set up your Supabase', 'راه‌اندازی Supabase شخصی'));
+    this.render();
+  }
+  private explain(code: string): string {
+    const messages: Record<string, [string, string]> = {
+      checking_project: ['Checking project', 'بررسی پروژه'], checking_collisions: ['Checking table names', 'بررسی تداخل جدول‌ها'],
+      installing_schema: ['Installing tables and permissions', 'نصب جدول‌ها و دسترسی‌ها'], verifying_schema: ['Verifying security and Realtime', 'بررسی امنیت و Realtime'],
+      creating_account: ['Creating sync account', 'ساخت حساب sync'], checking_account: ['Verifying sync sign-in', 'آزمایش ورود حساب sync'],
+      closing_signups: ['Disabling sign-ups (approved)', 'بستن ثبت‌نام طبق تأیید شما'], complete: ['Backend ready', 'بک‌اند آماده است'],
+      permission_denied: ['Supabase permission is missing. Reconnect with the required permissions.', 'مجوز لازم Supabase وجود ندارد؛ با دسترسی لازم دوباره متصل شوید.'],
+      sync_sign_in_failed: ['Cannot sign in to the sync account. Existing passwords were not changed. Use the correct password and retry.', 'ورود به حساب sync ممکن نشد. رمز حساب موجود تغییر نکرده؛ با رمز درست دوباره امتحان کنید.'],
+      conflicting_tables: ['This project has conflicting tables. Use a dedicated empty project.', 'این پروژه جدول‌های هم‌نام دارد؛ یک پروژهٔ اختصاصی خالی انتخاب کنید.'],
+      project_not_ready: ['Project is not ACTIVE_HEALTHY yet. Wait and reconnect.', 'پروژه هنوز ACTIVE_HEALTHY نیست؛ صبر کنید و دوباره متصل شوید.'],
+      session_expired: ['Connection expired. Start a new connection.', 'اتصال منقضی شد؛ اتصال جدید بسازید.'],
+      installer_unreachable: ['Cannot reach the installer. Check its URL and your connection.', 'سرویس نصب در دسترس نیست؛ آدرس و اتصال را بررسی کنید.'],
+      trusted_installer_required: ['Configure and approve a trusted installer first.', 'ابتدا آدرس سرویس نصب مورد اعتماد را تنظیم و تأیید کنید.'],
+      invalid_browser_confirmation: ['Browser confirmation failed. Use the return button or the correct one-time code.', 'تأیید مرورگر ناموفق بود؛ دکمهٔ بازگشت یا کد یک‌بارمصرف صحیح را استفاده کنید.'],
+    };
+    const label = messages[code]; return label ? this.t(label[0], label[1]) : code;
+  }
+  private text(name: string, value: string, change: (value: string) => void, secret = false): void {
+    new Setting(this.contentEl).setName(name).addText(c => {
+      if (secret) { c.inputEl.type = 'password'; c.inputEl.autocomplete = 'new-password'; }
+      c.setValue(value).onChange(change);
+    });
+  }
+  private toggle(name: string, value: boolean, change: (value: boolean) => void): void {
+    new Setting(this.contentEl).setName(name).addToggle(c => c.setValue(value).onChange(change));
+  }
+  private button(name: string, action: () => Promise<void> | void, primary = false): void {
+    new Setting(this.contentEl).addButton(b => {
+      b.setButtonText(name).setDisabled(this.busy);
+      if (primary) b.setCta();
+      b.onClick(() => void this.run(action));
+    });
+  }
+  private async run(action: () => Promise<void> | void): Promise<void> {
+    if (this.busy || !this.alive) return;
+    this.busy = true; this.error = ''; this.render();
+    try { await action(); }
+    catch (e) { this.error = e instanceof Error ? e.message : 'setup_failed'; }
+    finally { this.busy = false; if (this.alive) this.render(); }
+  }
+  private render(): void {
+    if (!this.alive) return;
+    const el = this.contentEl; el.empty();
+    el.createEl('p', { text: this.t('Your notes stay in your own Supabase project. This installer only prepares it.', 'یادداشت‌ها در پروژهٔ Supabase خودتان می‌مانند. این سرویس فقط راه‌اندازی را انجام می‌دهد.') });
+    if (this.error) el.createEl('p', { cls: 'vault-sync-warning', text: this.t('Setup stopped: ', 'راه‌اندازی متوقف شد: ') + this.explain(this.error) });
+    if (this.phase === 'start') {
+      const url = this.host.settings.installerUrl;
+      el.createEl('p', { text: this.t('Installer service: ', 'سرویس نصب: ') + (url || this.t('Not configured by the maintainer', 'توسط نگه‌دارنده تنظیم نشده است')) });
+      el.createEl('p', { text: this.t('Only use an installer you trust: it temporarily handles project administration and your sync password. Do not enter your Supabase dashboard password.', 'فقط به سرویس نصب مورد اعتماد متصل شوید؛ این سرویس موقتاً عملیات مدیریتی و رمز حساب sync را پردازش می‌کند. رمز حساب اصلی Supabase را وارد نکنید.') });
+      this.toggle(this.t('I trust this installer service', 'به این سرویس نصب اعتماد دارم'), this.trustInstaller, v => { this.trustInstaller = v; });
+      this.button(this.t('Connect Supabase', 'اتصال به Supabase'), async () => {
+        if (!url || !this.trustInstaller) throw new Error('trusted_installer_required');
+        this.client = new InstallerClient(url, async (target, method, headers, body) => {
+          const response = await requestUrl({ url: target, method, headers, body, throw: false });
+          return { status: response.status, data: response.json };
+        });
+        const health = await this.client.health(); this.allowCreation = health.allowProjectCreation;
+        const authorize = await this.client.begin();
+        if (!this.alive) { await this.client.close(); return; }
+        this.phase = 'authorizing'; window.open(authorize, '_blank', 'noopener,noreferrer');
+        this.schedulePoll();
+      }, true);
+    } else if (this.phase === 'authorizing') {
+      el.createEl('p', { text: this.t('Approve access in your browser, then return here. No access token needs to be pasted.', 'دسترسی را در مرورگر تأیید کنید و برگردید. نیازی به کپی‌کردن توکن نیست.') });
+      el.createEl('p', { text: this.t('Use “Return to Obsidian” in the browser. If it does not work, paste the one-time connection code below. Never share it.', 'در مرورگر «Return to Obsidian» را بزنید. اگر بازگشت کار نکرد، کد یک‌بارمصرف اتصال را اینجا وارد کنید؛ آن را به کسی ندهید.') });
+      this.text(this.t('One-time connection code (fallback)', 'کد یک‌بارمصرف اتصال (روش جایگزین)'), this.browserCode, v => { this.browserCode = v.trim(); }, true);
+      this.button(this.t('Confirm browser connection', 'تأیید اتصال مرورگر'), async () => {
+        await this.client!.confirmBrowser(this.browserCode); this.browserCode = ''; await this.pollState();
+      });
+      this.button(this.t('Check connection', 'بررسی اتصال'), () => this.pollState());
+    } else if (this.phase === 'project') {
+      new Setting(el).setName(this.t('Your project', 'پروژهٔ شما')).addDropdown(d => {
+        d.addOption('', this.t('Choose a dedicated project', 'یک پروژهٔ اختصاصی انتخاب کنید'));
+        for (const p of this.projects) d.addOption(p.ref, `${p.name} — ${p.status}`);
+        d.setValue(this.selected).onChange(v => { this.selected = v; });
+      });
+      this.button(this.t('Refresh projects', 'تازه‌سازی پروژه‌ها'), async () => { this.projects = await this.client!.projects(); });
+      this.button(this.t('Use this project', 'استفاده از این پروژه'), () => {
+        if (!this.projects.some(p => p.ref === this.selected)) throw new Error('select_project');
+        this.phase = 'confirm';
+      }, true);
+      if (this.allowCreation) {
+        this.button(this.t('Create a new project', 'ساخت پروژهٔ جدید'), async () => {
+          this.organizations = await this.client!.organizations(); this.showCreate = !this.showCreate;
+        });
+      } else el.createEl('p', { text: this.t('Create a dedicated project in the Supabase dashboard if you do not have one. Project creation is disabled on this installer.', 'اگر پروژه ندارید، در داشبورد Supabase یک پروژهٔ اختصاصی بسازید. ساخت پروژه در این سرویس غیرفعال است.') });
+      if (this.showCreate) {
+        new Setting(el).setName(this.t('Organization', 'سازمان')).addDropdown(d => {
+          d.addOption('', '—'); for (const o of this.organizations) d.addOption(o.slug, o.name);
+          d.setValue(this.organization).onChange(v => { this.organization = v; });
+        });
+        this.text(this.t('Project name', 'نام پروژه'), this.projectName, v => { this.projectName = v; });
+        this.text(this.t('Type the project name again to confirm creation', 'برای تأیید ساخت، نام پروژه را دوباره بنویسید'), this.confirmName, v => { this.confirmName = v; });
+        new Setting(el).setName(this.t('Region group', 'گروه منطقه')).addDropdown(d => d.addOptions({ emea: 'Europe / Middle East / Africa', americas: 'Americas', apac: 'Asia / Pacific' }).setValue(this.region).onChange(v => { this.region = v; }));
+        this.text(this.t('Database password (16+ characters; keep it yourself)', 'رمز دیتابیس (حداقل ۱۶ کاراکتر؛ خودتان نگه دارید)'), this.databasePassword, v => { this.databasePassword = v; }, true);
+        this.toggle(this.t('I approve creation and any charges under my organization plan. No free-tier guarantee.', 'ساخت پروژه و هزینه‌های احتمالی پلن سازمانم را تأیید می‌کنم؛ رایگان‌بودن تضمین نمی‌شود.'), this.acceptCosts, v => { this.acceptCosts = v; });
+        this.button(this.t('Confirm project creation', 'تأیید ساخت پروژه'), async () => {
+          const p = await this.client!.createProject({ name: this.projectName, confirmName: this.confirmName, organizationSlug: this.organization,
+            region: this.region, databasePassword: this.databasePassword, acceptCosts: this.acceptCosts });
+          this.databasePassword = ''; this.showCreate = false; this.selected = p.ref;
+          this.projects = await this.client!.projects();
+          new Notice(this.t('Project created. Wait until it is ACTIVE_HEALTHY and refresh.', 'پروژه ساخته شد. تا ACTIVE_HEALTHY شدن صبر کنید و تازه‌سازی را بزنید.'));
+        });
+      }
+    } else if (this.phase === 'confirm') {
+      const p = this.projects.find(x => x.ref === this.selected);
+      el.createEl('h3', { text: `${p?.name ?? ''} — ${this.selected}` });
+      el.createEl('p', { text: this.t('This installs tables, private storage and Realtime, and replaces this device’s current connection. It does not change existing account passwords.', 'جدول‌ها، فضای خصوصی و Realtime نصب و اتصال فعلی این دستگاه جایگزین می‌شود. رمز حساب‌های موجود تغییر نمی‌کند.') });
+      this.text(this.t('Type the project ref to confirm', 'شناسهٔ پروژه را برای تأیید بنویسید'), this.confirmRef, v => { this.confirmRef = v.trim(); });
+      this.toggle(this.t('This is my dedicated Vault Sync project', 'این پروژهٔ اختصاصی Vault Sync من است'), this.dedicated, v => { this.dedicated = v; });
+      new Setting(el).setName(this.t('Sync account', 'حساب sync')).addDropdown(d => d.addOptions({ create: this.t('Create account (or use existing)', 'ساخت حساب (یا استفاده از حساب موجود)'), existing: this.t('Use existing account', 'استفاده از حساب موجود') }).setValue(this.accountMode).onChange(v => { this.accountMode = v as 'create' | 'existing'; }));
+      this.text(this.t('Sync email', 'ایمیل حساب sync'), this.email, v => { this.email = v.trim(); });
+      this.text(this.t('Sync password (12+ characters; not your dashboard password)', 'رمز حساب sync (حداقل ۱۲ کاراکتر؛ نه رمز داشبورد)'), this.password, v => { this.password = v; }, true);
+      this.text(this.t('Repeat sync password', 'تکرار رمز sync'), this.passwordAgain, v => { this.passwordAgain = v; }, true);
+      this.toggle(this.t('Disable sign-ups for the ENTIRE project', 'بستن ثبت‌نام برای کل پروژه'), this.closeSignups, v => { this.closeSignups = v; });
+      this.button(this.t('Back', 'بازگشت'), () => { this.phase = 'project'; });
+      this.button(this.t('Set up Vault Sync', 'راه‌اندازی Vault Sync'), async () => {
+        if (this.confirmRef !== this.selected || !this.dedicated) throw new Error('confirm_dedicated_project');
+        if (this.password.length < 12 || this.password !== this.passwordAgain) throw new Error('password_mismatch_or_short');
+        await this.client!.install({ projectRef: this.selected, confirmRef: this.confirmRef, dedicatedProject: this.dedicated,
+          email: this.email, password: this.password, accountMode: this.accountMode, closeSignups: this.closeSignups });
+        this.phase = 'installing'; this.progress = 'starting'; this.schedulePoll();
+      }, true);
+    } else if (this.phase === 'installing') {
+      el.createEl('p', { text: this.t('Preparing your project… ', 'در حال آماده‌سازی پروژه… ') + this.progress });
+      el.createEl('p', { text: this.t('Closing requests cancellation between steps. Completed remote changes are not rolled back.', 'بستن پنجره، توقف بین مراحل را درخواست می‌کند. تغییرات انجام‌شده روی سرور بازگردانی نمی‌شوند.') });
+    } else if (this.phase === 'vault') {
+      el.createEl('h3', { text: this.t('Backend ready — choose your vault', 'بک‌اند آماده است — والت را انتخاب کنید') });
+      new Setting(el).setName(this.t('Remote vault', 'والت روی سرور')).addDropdown(d => d
+        .addOptions({ create: this.t('Create new vault', 'ساخت والت جدید'), choose: this.t('Use an existing vault', 'انتخاب والت موجود') })
+        .setValue(this.vaultAction).onChange(v => { this.vaultAction = v as 'create' | 'choose'; this.passphrase = ''; this.passphraseAgain = ''; this.render(); }));
+      if (this.vaultAction === 'create') {
+      this.text(this.t('Name for the new remote vault', 'نام والت جدید روی سرور'), this.vaultName, v => { this.vaultName = v; });
+      this.toggle(this.t('End-to-end encrypt this vault', 'رمزنگاری سرتاسری این والت'), this.encrypt, v => { this.encrypt = v; this.render(); });
+      if (this.encrypt) {
+        this.text(this.t('Encryption passphrase (12+ characters)', 'عبارت عبور رمزنگاری (حداقل ۱۲ کاراکتر)'), this.passphrase, v => { this.passphrase = v; }, true);
+        this.text(this.t('Repeat passphrase', 'تکرار عبارت عبور'), this.passphraseAgain, v => { this.passphraseAgain = v; }, true);
+        el.createEl('p', { text: this.t('The encryption passphrase stays on this device and never goes to the installer. Keep it for your other devices.', 'عبارت عبور روی همین دستگاه می‌ماند و به سرویس نصب نمی‌رود. برای دستگاه‌های دیگر آن را نگه دارید.') });
+      }
+
+      } else {
+        new Setting(el).setName(this.t('Existing vault', 'والت موجود')).addDropdown(d => {
+          d.addOption('', '—');
+          for (const v of this.remoteVaults) d.addOption(v.id, v.name + (v.encryption ? ' 🔒' : ''));
+          d.setValue(this.remoteSelected).onChange(v => { this.remoteSelected = v; this.render(); });
+        });
+        if (this.remoteVaults.find(v => v.id === this.remoteSelected)?.encryption) {
+          this.text(this.t('Encryption passphrase', 'عبارت عبور رمزنگاری'), this.passphrase, v => { this.passphrase = v; }, true);
+        }
+      }
+      this.button(this.t('Finish setup', 'تکمیل راه‌اندازی'), async () => {
+        if (this.vaultAction === 'create') {
+          if (!this.vaultName.trim()) throw new Error('vault_name_required');
+          if (this.encrypt && (this.passphrase.length < 12 || this.passphrase !== this.passphraseAgain)) throw new Error('passphrase_mismatch_or_short');
+          await this.host.createVault(this.vaultName.trim(), this.encrypt ? this.passphrase : null, false);
+        } else {
+          const vault = this.remoteVaults.find(v => v.id === this.remoteSelected);
+          if (!vault) throw new Error('select_vault');
+          await this.host.chooseVault(vault);
+          if (vault.encryption && !(await this.host.unlockVault(this.passphrase, false))) throw new Error('wrong_passphrase');
+        }
+        this.clearSecrets(); this.phase = 'done';
+      }, true);
+    } else {
+      el.createEl('h3', { text: this.t('Ready to sync', 'آمادهٔ همگام‌سازی') });
+      el.createEl('p', { text: this.result?.projectUrl ?? '' });
+      el.createEl('p', { text: this.t('On your next device: enter this project URL and its publishable key, sign in with the same sync account, and choose this vault. Do not create another vault.', 'روی دستگاه بعدی: URL و کلید publishable همین پروژه را وارد کنید، با همین حساب sync وارد شوید و همین والت را انتخاب کنید؛ والت جدید نسازید.') });
+      this.button(this.t('Done', 'تمام'), () => { this.onDone(); this.close(); }, true);
+    }
+  }
+  private schedulePoll(): void {
+    if (this.poll !== null) window.clearTimeout(this.poll);
+    if (this.alive) this.poll = window.setTimeout(() => { this.poll = null; void this.pollState(); }, 1500);
+  }
+  private async pollState(): Promise<void> {
+    if (!this.alive || !this.client || !['authorizing', 'installing'].includes(this.phase)) return;
+    try {
+      const state = await this.client.state();
+      if (!this.alive) return;
+      if (state.status === 'failed') {
+        this.error = state.error ?? 'installation_failed'; this.phase = 'start'; this.clearSecrets();
+        await this.client.close(); this.render(); return;
+      }
+      if (this.phase === 'authorizing' && state.status === 'connected') {
+        this.projects = await this.client.projects();
+        if (!this.alive) return;
+        this.phase = 'project'; this.render(); return;
+      }
+      if (this.phase === 'installing' && state.status === 'complete' && state.result) {
+        this.result = state.result;
+        this.busy = true; this.progress = this.t('Connecting this device', 'اتصال این دستگاه'); this.render();
+        // Management credentials are already discarded; only the public connection is applied.
+        await this.client.close();
+        if (!this.alive) return;
+        await this.host.applySetupResult(state.result, this.password);
+        if (!this.alive) return;
+        this.clearSecrets();
+        this.remoteVaults = await this.host.listVaults();
+        if (!this.alive) return;
+        this.vaultAction = this.remoteVaults.length ? 'choose' : 'create';
+        this.remoteSelected = this.remoteVaults[0]?.id ?? '';
+        this.busy = false; this.phase = 'vault'; this.render(); return;
+      }
+      this.progress = state.progress.map(code => this.explain(code)).join(' → ');
+      this.render(); this.schedulePoll();
+    } catch (e) {
+      if (!this.alive) return;
+      this.busy = false;
+      this.error = e instanceof Error ? e.message : 'setup_failed';
+      this.phase = 'start'; this.clearSecrets();
+      await this.client?.close(); this.render();
+    }
+  }
+  private clearSecrets(): void { this.browserCode = ''; this.password = ''; this.passwordAgain = ''; this.databasePassword = ''; this.passphrase = ''; this.passphraseAgain = ''; }
+  onClose(): void {
+    this.alive = false; this.stopReturn?.(); this.stopReturn = null;
+    if (this.poll !== null) window.clearTimeout(this.poll);
+    this.poll = null; this.clearSecrets(); this.contentEl.empty();
+    void this.client?.close(); this.client = null;
+  }
+}

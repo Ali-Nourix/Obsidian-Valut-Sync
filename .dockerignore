@@ -1,0 +1,9 @@
+.git
+node_modules
+.env
+.env.*
+*.pem
+*.key
+data.json
+main.js
+*.zip

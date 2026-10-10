@@ -7,6 +7,9 @@
 import { App, Notice, PluginSettingTab, Setting, setIcon } from 'obsidian';
 import type VaultSyncPlugin from '../../main';
 import { RemoteVault } from '../backend/remote-backend';
+import { keyProblem } from '../backend/supabase-client';
+import { installerOrigin } from '../onboarding/client';
+import { SupabaseSetupModal } from './setup-modal';
 import { normalizeFolder } from '../core/paths';
 import { timeAgo } from '../localization/labels';
 import { Language } from '../types';
@@ -77,6 +80,19 @@ export class VaultSyncSettingTab extends PluginSettingTab {
         })
     );
 
+    const fa = settings.language === 'fa';
+    new Setting(containerEl)
+      .setName(fa ? 'سرویس نصب خودکار (نسخهٔ آزمایشی)' : 'Automatic setup service (preview)')
+      .setDesc(fa ? 'فقط آدرس HTTPS سرویس مورد اعتماد نگه‌دارنده؛ نه توکن یا رمز. برای نسخهٔ آزمایشی باید سرویس جداگانه تنظیم شود.' : 'Trusted maintainer HTTPS service URL only, not a token or password. The separate installer must be configured for this preview.')
+      .addText(text => text.setPlaceholder('https://installer.example.org').setValue(settings.installerUrl).onChange(async value => {
+        try { settings.installerUrl = value.trim() ? installerOrigin(value) : ''; }
+        catch { return; }
+        await plugin.saveSettings();
+      }));
+    new Setting(containerEl).setName(fa ? 'راه‌اندازی بدون SQL و ترمینال' : 'Set up without SQL or a terminal')
+      .addButton(button => button.setButtonText(fa ? 'راه‌اندازی خودکار Supabase' : 'Set up Supabase automatically').setCta()
+        .onClick(() => new SupabaseSetupModal(this.app, plugin, () => { this.vaults = null; this.display(); }).open()));
+
     // ── Supabase project ────────────────────────────────────────────────────
     this.section(containerEl, 'database', l.secConnection, l.secConnectionDesc);
     new Setting(containerEl).setName(l.setUrl).setDesc(l.setUrlDesc).addText((text) =>
@@ -92,6 +108,11 @@ export class VaultSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName(l.setKey).setDesc(l.setKeyDesc).addText((text) => {
       text.inputEl.type = 'password';
       text.setValue(settings.supabaseKey).onChange(async (value) => {
+        if (keyProblem(value) === 'secret') {
+          text.setValue(settings.supabaseKey);
+          new Notice(l.noticeSecretKey, 10_000);
+          return;
+        }
         settings.supabaseKey = value.trim();
         await plugin.saveSettings();
         this.reconnectSoon();

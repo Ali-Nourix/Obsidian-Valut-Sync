@@ -6,6 +6,8 @@
 // the status bar, commands and settings. The sync logic is in src/core.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { deliverSetupReturn } from './src/onboarding/return-channel';
+import { validateSetupResult, SetupResult } from './src/onboarding/client';
 import { Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from 'obsidian';
 import { EncryptedPathBackend } from './src/backend/encrypted-paths';
 import { BackendError, RemoteBackend, RemoteVault } from './src/backend/remote-backend';
@@ -80,6 +82,7 @@ export default class VaultSyncPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.registerObsidianProtocolHandler('vault-sync-setup', params => deliverSetupReturn(params));
     this.device = new DeviceStore(this.app);
     this.logFile = new JsonFile(this.app.vault.adapter, `${this.pluginDir}/state/log.json`);
     this.log.load((await this.logFile.load()) ?? []);
@@ -105,6 +108,11 @@ export default class VaultSyncPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (keyProblem(this.settings.supabaseKey) === 'secret') {
+      this.settings.supabaseKey = '';
+      await this.saveSettings();
+      new Notice(this.labels.noticeSecretKey, 10_000);
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -420,6 +428,22 @@ export default class VaultSyncPlugin extends Plugin {
   }
 
   // ── Account and vault actions (used by the settings tab) ────────────────
+
+  /** Only public configuration is persisted; password is used for a local sign-in. */
+  async applySetupResult(value: SetupResult, password: string): Promise<void> {
+    const result = validateSetupResult(value);
+    await this.closeVault();
+    this.sessionMaster = null;
+    this.settings.supabaseUrl = result.projectUrl;
+    this.settings.supabaseKey = result.publishableKey;
+    this.settings.email = result.email;
+    this.settings.vaultId = null;
+    this.settings.vaultName = '';
+    this.settings.vaultEncryption = null;
+    await this.saveSettings();
+    await this.reconnect();
+    await this.signIn(result.email, password);
+  }
 
   async testConnection(): Promise<void> {
     await this.reconnect();

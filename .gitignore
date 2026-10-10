@@ -4,3 +4,11 @@ main.js
 .DS_Store
 data.json
 *.zip
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.supabase/
+supabase/.temp/
+preview-onboarding.html

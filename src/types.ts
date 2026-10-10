@@ -10,6 +10,8 @@ export type Language = 'en' | 'fa';
 
 export interface VaultSyncSettings {
   language: Language;
+  /** Public URL of a trusted OAuth installer; never an API/admin key. */
+  installerUrl: string;
   /** Project URL, e.g. https://abcd.supabase.co */
   supabaseUrl: string;
   /** The publishable (anon) key. Never the secret / service-role key. */
@@ -33,6 +35,7 @@ export interface VaultSyncSettings {
 
 export const DEFAULT_SETTINGS: VaultSyncSettings = {
   language: 'en',
+  installerUrl: '',
   supabaseUrl: '',
   supabaseKey: '',
   email: '',
