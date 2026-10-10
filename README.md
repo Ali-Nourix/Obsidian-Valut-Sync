@@ -1,163 +1,363 @@
+<div align="center">
+
 # Vault Sync
 
-Keep one Obsidian vault in sync between your phone and your computer through **your own Supabase project**. Notes and attachments flow both ways within seconds. Edits made on two devices at once are merged automatically, and when they truly collide both versions are kept.
+### Your vault. Your Supabase. Your devices.
 
-Supabase is used as a **relay, not as storage**: a file's content stays on the server only until your other devices have received it, and is then deleted. What remains is a small index of names, fingerprints and versions (no content) that lets devices detect concurrent edits. With end-to-end encryption on, even the names in that index are encrypted.
+همگام‌سازی یادداشت‌ها و فایل‌های Obsidian بین گوشی و کامپیوتر، با **Supabase خودِ شما**.
 
-> راهنمای فارسی نصب و راه‌اندازی: [docs/setup-supabase.fa.md](docs/setup-supabase.fa.md)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.8.7%2B-7C3AED?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md)
+[![Manifest version](https://img.shields.io/badge/Manifest-0.3.0-2783DE?style=flat-square)](manifest.json)
+[![Status](https://img.shields.io/badge/Status-Release%20preview-D5803B?style=flat-square)](https://github.com/Ali-Nourix/Valut-Sync/tree/Release)
+[![Supabase](https://img.shields.io/badge/Backend-Your%20Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](src/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-46A171?style=flat-square)](LICENSE)
 
-## Features
+**Desktop + Mobile** · **Conflict-aware sync** · **Optional E2EE** · **English / فارسی**
 
-- **Two-way sync** of every file in the vault (notes, images, PDFs, canvases…), on desktop and mobile (iOS, Android).
-- **Near-instant**: Supabase Realtime tells the other devices about a change; they also check when Obsidian returns to the foreground and on a safety-net interval.
-- **No lost edits**:
-  - Notes edited on two devices are merged line by line.
-  - Two devices appending to the same daily note keep both additions.
-  - Overlapping edits, or edits to binary files, keep your version under the original name and save the other version as `note (conflict 2026-10-03 1430).md`.
-- **Safe deletes**:
-  - Deleted files go to the trash.
-  - The first sync on a device never deletes anything.
-  - A sync that would delete many files waits for your approval.
-  - A file that merely vanished (for example evicted by iCloud) is not treated as deleted until it has stayed missing for a minute.
-- **Relay, not storage**: content is uploaded only when another device needs it and deleted once delivered. A device alone uploads no content at all. A new device, or one that was away for a long time, asks the others for what it lacks; they send it the next time they run Obsidian.
-- **Renames** travel as renames, without re-uploading the content.
-- **Persian and other non-Latin names** work across iOS, macOS, Android and Windows. Names are compared in Unicode NFC, and letter case is handled on case-insensitive file systems.
-- **Optional end-to-end encryption**: AES-256-GCM, with a key from your passphrase via PBKDF2 (600 000 iterations). Contents and file names are both unreadable to the server.
-- **English and Persian** interface.
+[نصب و آموزش](#installation) · [تصاویر](#screenshots) · [نصب خودکار](#automatic-setup) · [امنیت](#security) · [رفع مشکل](#troubleshooting)
 
-## Automatic setup preview (`Release` branch)
+</div>
 
-An English/Persian setup wizard is available on this branch: connect Supabase in your browser, return to the same Obsidian device, choose a dedicated project, install the backend and create/reuse your sync account, then choose/create a remote vault. No SQL editor or terminal is required for the end user **after the installer service is hosted and configured**.
+> **وضعیت این شاخه:** قابلیت نصب خودکار در `Release`، نسخهٔ پیش‌نمایش است. کد ویزارد و سرویس نصب موجود است، اما سرویس OAuth عمومی هنوز مستقر و تنظیم نشده است. در زمان تهیهٔ این راهنما، مخزن Release قابل‌دانلودِ پلاگین نداشت؛ فعلاً برای امتحان این شاخه باید سورس را build کنید. badge نسخه، مقدار `manifest.json` است، نه ادعای انتشار یک Release.
 
-This is not a live hosted integration yet. The maintainer must register a Supabase OAuth app and deploy the separate installer. Read [installer/README.md](installer/README.md). In plugin settings, enter the trusted installer HTTPS URL and select **Set up Supabase automatically**. Never paste management tokens into normal plugin settings. Existing accounts are never silently password-reset. Project creation is disabled by default and requires explicit organization/cost consent when enabled.
+## چرا Vault Sync؟
 
-Manual setup below remains available and does not require trusting a third-party installer. Use Node.js 22+ for development; after this branch's project-scoped session change, sign in again on each device.
+Vault Sync یک پلاگین Obsidian است که یک والت را بین دستگاه‌های شما از طریق پروژهٔ Supabase شخصی‌تان همگام می‌کند. برای استفاده، به پروژه، حساب یا کلیدهای سازندهٔ پلاگین نیاز ندارید.
 
-## Setup
+| قابلیت | رفتار |
+| --- | --- |
+| **همگام‌سازی دوطرفه** | یادداشت‌ها، تصاویر، PDFها، canvasها و فایل‌های داخل محدودهٔ sync |
+| **تغییرات زنده** | اعلان‌های Supabase Realtime، بررسی هنگام بازگشت به برنامه و بازهٔ بررسی دوره‌ای |
+| **مدیریت تعارض** | ادغام تغییرات سازگار یادداشت‌ها؛ نگه‌داشتن نسخهٔ تعارض برای برخوردهای واقعی |
+| **حذف محافظت‌شده** | انتقال به سطل زباله، تأیید حذف گروهی و عدم حذف در اولین sync |
+| **رمزنگاری اختیاری** | AES-256-GCM برای محتوا و نام فایل‌ها؛ PBKDF2 با ۶۰۰٬۰۰۰ تکرار برای ساخت کلید |
+| **نام‌های فارسی** | یکسان‌سازی Unicode NFC و مدیریت تفاوت بزرگی/کوچکی حروف |
+| **دستگاه‌های مختلف** | طراحی برای دسکتاپ، iOS و Android؛ تست واقعی دستگاه پیش از انتشار لازم است |
+| **پروژهٔ شخصی** | هر کاربر پروژه و حساب Supabase خودش را دارد؛ بک‌اند مشترک سازنده لازم نیست |
 
-1. **Create a Supabase project** at [supabase.com](https://supabase.com). The free tier is plenty: the server only ever holds files in transit.
-2. **Install the backend with one command.** Create a personal access token at [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens), then in this project:
+**همگام‌سازی، جایگزین بکاپ نیست.** پیش از اولین نصب، از والت خود نسخهٔ پشتیبان بگیرید.
 
-   ```bash
-   npm install
-   npm run deploy
-   ```
+<a id="screenshots"></a>
 
-   It asks for the project URL and the token, installs [`supabase/schema.sql`](supabase/schema.sql) (tables, functions, private bucket, realtime), can create your sync account, offers to close public sign-ups, and prints the URL and publishable key for the plugin. It is safe to run again, for example after an update. You can also paste `supabase/schema.sql` into the dashboard's **SQL Editor** by hand.
-3. **Your account.** If you did not create it with `npm run deploy`, add a user under **Authentication → Users → Add user** with "Auto Confirm User" ticked (or use **Create account** in the plugin while sign-ups are open).
-4. **Install the plugin** on every device. Until it is in the community list, use [BRAT](https://github.com/TfTHacker/obsidian42-brat) or copy `main.js`, `manifest.json` and `styles.css` from a release into `<vault>/.obsidian/plugins/vault-sync/`.
-5. **In the plugin settings, on each device:**
-   1. Paste the **Project URL** and the **publishable (anon) key** from *Project Settings → API*. Never use the secret / service_role key.
-   2. Sign in with the same account on every device.
-   3. Under **Remote vault**, click **Create new** on the first device. Encryption is optional and cannot be changed later.
-   4. On the other devices, **choose** that same vault.
+## تصاویر رابط
 
-On a device that already has files, the first sync keeps everything from both sides. Files missing on one side are copied over, and files that differ become conflict copies. Nothing is deleted.
+**این تصاویر، رندر آفلاینِ کد واقعی ویزارد هستند، با پوستهٔ شبیه‌سازی‌شدهٔ Obsidian و APIهای نمونه.** اسکرین‌شات اجرای زنده در Obsidian یا مدرک اتصال به حساب واقعی Supabase نیستند. نام‌ها، ایمیل و شناسهٔ پروژه در آن‌ها نمونه‌اند.
 
-## How it works
+### اتصال به Supabase شخصی
 
-Each file has a row in `public.files` (the index) with a content id (SHA-256, or HMAC when encrypted), a version and a `seq` number. Contents travel through the private `vault-sync` storage bucket, named by content id, and only for as long as needed:
+![پیش‌نمایش آفلاین مرحلهٔ اتصال ویزارد Vault Sync؛ با تأیید اعتماد به سرویس نصب](docs/images/setup-connect.svg)
 
-- When a device commits a change, the server records that every *other* device is owed that blob. The blob is uploaded only if there is another device.
-- A device that has received a blob (or no longer needs it) acknowledges it. A blob nobody is owed is deleted.
-- A device that needs content the server no longer has asks for it; any device holding that content uploads it on its next sync, and Realtime wakes the asker.
-- Devices unseen for 30 days are forgotten, so nothing is held for them; when they return, they ask.
-- Merging needs the common ancestor of two edits. Each device keeps that copy of its notes locally (in the plugin folder), so merging works without the server keeping old versions.
+<details>
+<summary><strong>نمایش تصویر تأیید پروژه و حساب sync</strong></summary>
 
-Every device remembers the **base**: what it and the server agreed on at the last sync. Each sync compares three things for every path: the local file (L), the server row (R) and the base (B). Comparing against B is what tells "created here" apart from "deleted there", and "edited on both sides" apart from "edited on one".
+شناسهٔ مقصد، حساب sync و تغییر احتمالی ثبت‌نامِ کل پروژه پیش از نصب مشخص می‌شوند؛ رمز حساب اصلی داشبورد Supabase درخواست نمی‌شود.
 
-| B | Local | Server | Result |
-|---|---|---|---|
-| – | new | – | upload |
-| – | – | new | download |
-| ✓ | changed | same | upload (compare-and-set on the version) |
-| ✓ | same | changed | download |
-| ✓ | changed | changed | merge, or keep both |
-| ✓ | deleted | same | delete on the server |
-| ✓ | same | deleted | move to trash here |
-| ✓ | deleted | changed | the edit wins: download |
-| ✓ | changed | deleted | the edit wins: upload |
+![پیش‌نمایش آفلاین تأیید پروژهٔ اختصاصی و ساخت یا استفاده از حساب sync](docs/images/setup-account.svg)
 
-Writes go through one database function, `commit_files`. It applies each change only if the row is still at the version the device saw, so two devices can never silently overwrite each other. The loser merges and tries again. The full decision table and the reasons the cycle is crash-safe are in [docs/sync-design.md](docs/sync-design.md).
+</details>
 
-## Light on disks and on Supabase
+<details>
+<summary><strong>نمایش تصویر ساخت والت و رمزنگاری</strong></summary>
 
-Sync is built to cost almost nothing when nothing changed, because phones and SSDs feel every needless write:
+پس از آماده‌شدن بک‌اند، والت انتخاب یا ساخته می‌شود. عبارت عبور رمزنگاری روی دستگاه پردازش می‌شود و به سرویس نصب فرستاده نمی‌شود.
 
-- A sync with no changes writes no file on the device and makes a single call to Supabase.
-- State, settings and the log are written only when they change (the log at most every five minutes), and a note's merge base is written once.
-- Typing triggers one sync after ten quiet seconds, not one per keystroke. Live updates from Supabase Realtime wake the other devices; the 15-minute timer is only a safety net.
-- On the server, read-only calls take no locks and device heartbeats are written hourly.
+![پیش‌نمایش آفلاین ساخت والت جدید و تعیین عبارت عبور رمزنگاری سرتاسری](docs/images/setup-encryption.svg)
 
-**If your vault is in git** (for example with Obsidian Git), keep the plugin's working files out of it. Add this to the vault's `.gitignore`:
+</details>
 
+برای امتحان تعاملی همین رابط، در سورس پروژه اجرا کنید:
+
+```bash
+npm ci
+npm run preview:onboarding
 ```
+
+سپس `preview-onboarding.html` را در مرورگر باز کنید. **هیچ رمز واقعی وارد نکنید.** این نمایش آفلاین است و هیچ پروژه یا حسابی نمی‌سازد. برای این دستور Node.js 22 یا جدیدتر لازم است.
+
+<a id="installation"></a>
+
+## نصب و راه‌اندازی — آموزش قدم‌به‌قدم
+
+دو چیز مستقل نصب می‌شوند:
+
+1. **پلاگین:** روی هر دستگاهی که Obsidian دارید.
+2. **بک‌اند:** یک‌بار روی پروژهٔ Supabase خودتان، برای استفادهٔ همهٔ دستگاه‌هایتان.
+
+**کاربران معمولی نیازی به fork، GitHub Actions یا توکن سازنده ندارند.** مسیر SQL زیر بدون توکن مدیریتی و بدون اعتماد به سرویس نصب واسط کار می‌کند.
+
+### پیش از شروع
+
+- از والت بکاپ بگیرید.
+- Obsidian حداقل نسخهٔ `1.8.7` داشته باشید.
+- یک حساب Supabase و یک **پروژهٔ اختصاصی Vault Sync** داشته باشید؛ از پروژهٔ production وب‌سایت یا برنامهٔ دیگری استفاده نکنید. نام جدول‌هایی مثل `public.files` عمومی‌اند و ممکن است تداخل کنند.
+- پروژه باید آماده و فعال باشد. هزینه، ظرفیت و محدودیت‌ها را در پلن خودتان بررسی کنید؛ رایگان‌بودن یا ظرفیت مشخص تضمین نمی‌شود.
+- برای build سورس یا ابزارهای توسعه، Node.js **22+** لازم است؛ برای تنظیم دستی Supabase در داشبورد، Node لازم نیست.
+
+### ۱. پلاگین را روی دستگاه اول نصب کنید
+
+**اگر فایل آماده در [Releases](https://github.com/Ali-Nourix/Valut-Sync/releases) موجود است:**
+
+1. فایل‌های `main.js`، `manifest.json` و `styles.css` را از همان نسخه بگیرید.
+2. آن‌ها را در پوشهٔ زیر داخل والت قرار دهید:
+
+```text
+<vault>/.obsidian/plugins/vault-sync/
+├── main.js
+├── manifest.json
+└── styles.css
+```
+
+3. در Obsidian به **Settings → Community plugins** بروید؛ در صورت نیاز Restricted mode را خاموش و Vault Sync را فعال کنید.
+
+> `Code → Download ZIP`، سورس پروژه است؛ با بستهٔ آمادهٔ پلاگین فرق دارد. وقتی Release آماده وجود ندارد، سورس به build نیاز دارد.
+
+**برای امتحان شاخهٔ فعلی `Release`، تا زمانی که بستهٔ آماده منتشر نشده:**
+
+```bash
+git clone --branch Release https://github.com/Ali-Nourix/Valut-Sync.git
+cd Valut-Sync
+npm ci
+npm run build
+```
+
+بعد سه فایل بالا را از پوشهٔ پروژه به پوشهٔ پلاگین کپی کنید. تا وقتی مخزن خصوصی است، clone فقط برای حساب‌های دارای دسترسی ممکن است. نام مخزن عمداً در دستور همان `Valut-Sync` فعلی است.
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) نیز بعد از فراهم‌شدن Release مناسب، مسیر جایگزین نصب است. نام مخزن یا شاخه را با وجود یک بستهٔ نصب‌شدنی اشتباه نگیرید.
+
+### ۲. بک‌اند را روی Supabase خودتان آماده کنید
+
+1. وارد [Supabase Dashboard](https://supabase.com/dashboard) شوید و یک پروژهٔ اختصاصی بسازید.
+2. صبر کنید تا پروژه آماده شود.
+3. فایل [`supabase/schema.sql`](supabase/schema.sql) را باز کنید؛ با **Raw**، محتوای کامل آن را کپی کنید.
+4. در **SQL Editor همان پروژهٔ خودتان**، یک query جدید باز کنید، محتوا را paste و اجرا کنید.
+
+این فایل جدول‌های sync، توابع، RLS، باکت خصوصی `vault-sync` و Realtime را تنظیم می‌کند. فقط کد SQL عمومی لازم است؛ **توکن مدیریت، کلید secret یا رمز دیتابیس را داخل ریپو یا پلاگین قرار ندهید.**
+
+اگر پروژه از قبل داده یا جدول دارد، قبل از اجرای SQL تداخل نام‌ها را بررسی کنید. برای نصب تمیز، پروژهٔ اختصاصیِ خالی امن‌تر است.
+
+### ۳. حساب sync خودتان را بسازید
+
+در همان پروژه به **Authentication → Users → Add user** بروید:
+
+- ایمیل خودتان را وارد کنید.
+- یک رمز مخصوص حساب sync تعیین کنید؛ لازم نیست و نباید رمز حساب اصلی Supabase را به پلاگین بدهید.
+- **Auto Confirm User** را فعال کنید.
+
+با **همین حساب sync** روی تمام دستگاه‌ها وارد خواهید شد. حساب داشبورد Supabase و حساب داخل پروژه، دو حساب متفاوت‌اند.
+
+در صورت بازبودن sign-up، ساخت حساب از خود پلاگین هم ممکن است؛ اگر تأیید ایمیل لازم باشد، ابتدا ایمیل را تأیید کنید. بستن sign-up تصمیمی جداگانه و مربوط به **کل پروژه** است.
+
+### ۴. دستگاه اول را متصل کنید
+
+در تنظیمات Vault Sync:
+
+1. **Project URL:** آدرس پروژهٔ Supabase خودتان.
+2. **Publishable / anon key:** کلید عمومی همان پروژه، از بخش API داشبورد.
+3. **Test connection / آزمایش اتصال:** باید آماده‌بودن بک‌اند را تأیید کند.
+4. با ایمیل و رمز حساب sync مرحلهٔ قبل وارد شوید.
+5. در **Remote vault**، روی **Create new / ساخت والت جدید** بزنید و نام بدهید.
+6. در صورت تمایل، رمزنگاری را همین‌جا فعال و عبارت عبور را تعیین کنید. این انتخاب بعداً برای همان والت قابل تغییر نیست.
+
+**مقادیر مجاز در تنظیمات عادی:** URL و publishable/anon key. **مقادیر ممنوع:** `sbp_…`، `sb_secret_…` و کلید دارای نقش `service_role`.
+
+عبارت عبور رمزنگاری را برای دستگاه‌های بعدی نگه دارید. گزینهٔ یادآوری کلید روی دستگاه‌های غیرقابل اعتماد مناسب نیست.
+
+### ۵. دستگاه دوم را اضافه کنید
+
+1. همان نسخهٔ پلاگین را روی گوشی یا کامپیوتر دوم نصب کنید.
+2. **همان URL و publishable key** را وارد کنید.
+3. با **همان حساب sync** وارد شوید.
+4. والتِ ساخته‌شده در دستگاه اول را **انتخاب کنید؛ والت جدید نسازید.**
+5. اگر رمزنگاری روشن است، عبارت عبور همان والت را وارد کنید.
+
+SQL را دوباره اجرا نکنید، پروژهٔ دیگری نسازید و OAuth یا توکن مدیریتی جدید برای دستگاه دوم لازم ندارید.
+
+### ۶. اولین همگام‌سازی را آزمایش کنید
+
+- Obsidian را روی هر دو دستگاه باز و **Sync now / همگام‌سازی اکنون** را اجرا کنید.
+- یک یادداشت آزمایشی روی دستگاه اول بسازید؛ ظاهرشدنش روی دستگاه دوم را بررسی کنید.
+- همان یادداشت را روی دستگاه دوم ویرایش و برگشت تغییر را بررسی کنید.
+- یک فایل کوچک اضافه کنید و گزارش sync را ببینید.
+- قبل از استفادهٔ جدی، قطع شبکه و تعارض یک یادداشت آزمایشی را هم امتحان کنید.
+
+اولین sync برای نگه‌داشتن فایل‌های موجود دو طرف طراحی شده و چیزی را حذف نمی‌کند. اگر فایل‌ها تفاوت داشته باشند، ممکن است نسخهٔ تعارض ساخته شود. تا کامل‌شدن sync از حذف گروهی فایل‌های اصلی خودداری کنید.
+
+**اگر دستگاه جدید منتظر فایل است:** Obsidian را روی یکی از دستگاه‌های قبلی هم باز کنید. Supabase اینجا relay است، نه آرشیو دائمی؛ دستگاه قبلی باید محتوای لازم را ارسال کند.
+
+<a id="automatic-setup"></a>
+
+## نصب خودکار داخل پلاگین — پیش‌نمایش
+
+این مسیر، کپی‌کردن SQL و اجرای ترمینال را برای کاربر حذف می‌کند، **بعد از آنکه سرویس نصب توسط نگه‌دارنده ثبت، مستقر و تنظیم شده باشد**. در حال حاضر سرویس عمومی آمادهٔ اتصال معرفی نشده است.
+
+1. آدرس HTTPS **سرویس نصب مورد اعتماد** را در تنظیمات وارد کنید و «راه‌اندازی خودکار Supabase» را بزنید.
+2. در سایت Supabase وارد شوید و دسترسی درخواست‌شده را بررسی و تأیید کنید؛ رمز داشبورد را داخل پلاگین وارد نکنید.
+3. در مرورگر **Return to Obsidian** را بزنید. اگر بازگشت کار نکرد، کد یک‌بارمصرف اتصال را فقط در همان پنجرهٔ ویزارد وارد کنید؛ کد را به دیگران ندهید.
+4. پروژهٔ اختصاصی خودتان را انتخاب کنید؛ نام و شناسهٔ مقصد را بررسی و شناسه را برای تأیید بنویسید.
+5. ایمیل و رمز **حساب sync** را تعیین کنید و ساخت حساب یا استفاده از حساب موجود را انتخاب کنید. رمز حساب موجود خودکار تغییر نمی‌کند.
+6. گزینهٔ بستن ثبت‌نام کل پروژه را فقط اگر می‌خواهید فعال کنید؛ پیش‌فرض خاموش است.
+7. نصب را اجرا کنید؛ ویزارد پیشرفت نصب schema، فضای خصوصی، Realtime و حساب را نشان می‌دهد.
+8. پس از اتصال دستگاه، والت موجود را انتخاب یا والت جدید بسازید. عبارت عبور رمزنگاری به سرویس نصب فرستاده نمی‌شود.
+
+**اعتماد و هزینه:** این سرویس موقتاً مجوز مدیریت پروژه و رمز حساب sync را پردازش می‌کند؛ به اپراتورش باید اعتماد داشته باشید. یادداشت‌ها مستقیم به پروژهٔ شما می‌روند، نه به سرویس نصب. ساخت پروژهٔ جدید در سرویس **پیش‌فرض غیرفعال** است؛ در صورت فعال‌شدن، انتخاب سازمان، منطقه، رمز دیتابیس و تأیید هزینه لازم دارد. هیچ تضمین پلن رایگان یا قیمت مشخصی وجود ندارد.
+
+بستن ویزارد توقف بین مراحل را درخواست می‌کند؛ جدول، حساب یا پروژه‌ای که قبلاً ساخته شده، خودکار حذف یا rollback نمی‌شود. بعد از پایان می‌توانید مجوز integration را در Supabase بازبینی یا لغو کنید؛ کنارگذاشتن توکن در سرویس با revoke مجوز در Supabase فرق دارد.
+
+<details>
+<summary><strong>برای نگه‌دارنده: چطور نصب خودکار را واقعاً فعال کنیم؟</strong></summary>
+
+1. یک Supabase OAuth app ثبت کنید و callback مجاز را دقیقاً `https://YOUR-INSTALLER-HOST/oauth/callback` قرار دهید.
+2. سرویس مستقل داخل `installer/` را با Node.js 22+ روی میزبان HTTPS مستقر کنید. این سرویس بک‌اند sync کاربران نیست؛ فقط نصب‌کننده است.
+3. در secret store میزبان، نام‌های `SUPABASE_OAUTH_CLIENT_ID` و `SUPABASE_OAUTH_CLIENT_SECRET` را تنظیم کنید. مقدارها را در فایل عمومی، GitHub issue، تصویر یا chat نگذارید.
+4. تنظیم عمومی `INSTALLER_PUBLIC_URL` را برابر origin سرویس قرار دهید؛ بدون query، username/password یا مسیر اضافی.
+5. حداقل مجوزهای موردنیاز را از [مستندات OAuth](https://supabase.com/docs/guides/platform/oauth-apps/oauth-scopes) بررسی کنید. ساخت پروژه و تغییر تنظیمات Auth فقط در صورت نیاز مجوز داشته باشند.
+6. سرویس را با `npm run installer` اجرا کنید؛ secretها از تنظیمات میزبان تزریق شوند. اطلاعات حساس درخواست/پاسخ و query callback نباید در reverse proxy یا APM ثبت شوند.
+7. `INSTALLER_ALLOW_PROJECT_CREATION` را برای شروع غیرفعال نگه دارید. قبل از فعال‌کردن، هزینه و سهمیهٔ سازمان‌ها و تجربهٔ تأییدشان را بررسی کنید.
+8. ابتدا روی یک پروژهٔ آزمایشی و روی دسکتاپ/موبایل واقعی تست کنید؛ بعد URL معتبر سرویس را به کاربران بدهید.
+
+این پیاده‌سازی sessionهای موقت را در حافظهٔ یک instance نگه می‌دارد. استقرار چند replica به ذخیره‌سازی امن session و کنترل نرخ مشترک نیاز دارد. مرز اعتماد، scopeها، لاگ‌ها و بازیابی خطا باید پیش از انتشار عمومی بازبینی شوند. جزئیات بیشتر در [راهنمای اپراتور](installer/README.md) است؛ مراحل اصلی بالا همین‌جا در README آمده‌اند.
+
+</details>
+
+<details>
+<summary><strong>مسیر ترمینالی برای کاربران فنی</strong></summary>
+
+در سورس پروژه و با Node.js 22+:
+
+```bash
+npm ci
+npm run deploy
+```
+
+اسکریپت فعلی `scripts/deploy.mjs` آدرس پروژه و PAT **خود کاربر** را می‌گیرد و می‌تواند schema و حساب را آماده کند. این توکن با publishable key فرق دارد؛ فقط برای نصب است و نباید در تنظیمات عادی پلاگین وارد شود.
+
+**احتیاط نسخهٔ فعلی:** اسکریپت legacy می‌تواند رمز حساب را در خروجی نشان دهد و در حالت غیرتعاملی به‌طور پیش‌فرض ثبت‌نام کل پروژه را ببندد. ترمینال را ضبط نکنید و بدون بازبینی روی پروژهٔ مشترک اجرا نکنید. مسیر SQL یا ویزارد جدید، آموزش اصلی این README است. پس از نصب، PAT را در Supabase revoke کنید اگر دیگر لازم ندارید.
+
+</details>
+
+## معماری: relay، نه بکاپ
+
+```text
+Obsidian device A ──┐
+                   ├── Your Supabase project ── index + private transit bucket
+Obsidian device B ──┘                         └─ Realtime notifications
+
+Optional setup only:
+Obsidian wizard ── OAuth installer ── Supabase Management / Auth APIs
+```
+
+- هر دستگاه، نسخهٔ محلی، index سرور و وضعیت موردتوافقِ sync قبلی را مقایسه می‌کند.
+- نوشتن‌ها با compare-and-set انجام می‌شوند تا تغییر هم‌زمان بی‌صدا بازنویسی نشود.
+- نسخهٔ پایهٔ یادداشت برای merge روی دستگاه نگه‌داری می‌شود.
+- محتوا فقط وقتی دستگاه دیگری نیاز دارد ارسال می‌شود. پس از دریافت و تأیید دستگاه‌ها، blobهای بدون نیاز واجد پاک‌سازی می‌شوند؛ پاک‌سازی به اجرای کلاینت و مهلت محافظتی وابسته است، نه حذف آنی تضمین‌شده.
+- دستگاهی که ۳۰ روز دیده نشده فراموش می‌شود؛ هنگام برگشت، محتوای لازم را درخواست می‌کند.
+
+منطق و جدول کامل تصمیم‌ها در [sync-design.md](docs/sync-design.md) مستند است.
+
+<a id="security"></a>
+
+## امنیت و حریم خصوصی
+
+| داده یا کلید | جای درست | نکته |
+| --- | --- | --- |
+| Project URL و publishable/anon key | تنظیمات پلاگین | دسترسی به داده‌ها همچنان به ورود و RLS وابسته است |
+| نشست کاربر و شناسهٔ دستگاه | storage محلی دستگاه | با پروژهٔ تنظیم‌شده scope می‌شود، نه داخل `data.json` |
+| PAT، OAuth token و secret/service-role key | فقط مسیر نصبِ مجاز و امن | نه در ریپو، تنظیمات عادی پلاگین یا screenshots |
+| عبارت عبور رمزنگاری | دستگاه کاربر | به سرویس نصب فرستاده نمی‌شود |
+| کلید رمزنگاریِ remembered | storage محلی Obsidian | keychain سیستم‌عامل نیست؛ روی دستگاه غیرقابل اعتماد یادآوری را خاموش کنید |
+
+- با رمزنگاری روشن، محتوای فایل و نام فایل‌ها برای سرور قابل خواندن نیستند؛ اندازه و زمان‌ها و بعضی metadata همچنان قابل مشاهده‌اند.
+- رمزنگاری سرور/انتقال، دستگاه آلوده، پلاگین مخرب، یادداشت محلی یا merge baseهای محلی را امن نمی‌کند.
+- اگر کلیدی قبلاً منتشر شده، **اول revoke/rotate** کنید؛ حذف فایل یا `.gitignore` تاریخچه و بکاپ‌ها را پاک نمی‌کند.
+- اسکن secret روی فایل‌های تغییرکرده، تضمین ممیزی تمام تاریخچه، لاگ‌ها و artifactها نیست.
+
+اگر والت را با Git نگه می‌دارید، state و merge baseهای این دستگاه را commit نکنید:
+
+```gitignore
 .obsidian/plugins/vault-sync/state/
 .obsidian/plugins/vault-sync/base/
 ```
 
-Those folders hold this device's sync state and merge bases; they are meant to differ on every device and should never be committed.
+تنظیمات، تصاویر و خروجی‌های خطا را قبل از به‌اشتراک‌گذاری بررسی کنید. هنگام گزارش مشکل، توکن، رمز، session، عبارت عبور یا محتوای خصوصی یادداشت نفرستید.
 
-## Privacy and security
+<a id="troubleshooting"></a>
 
-- Every row and every stored file belongs to your Supabase user (row level security). The publishable key alone can read or write nothing.
-- The session, the device id and any remembered encryption key are stored in Obsidian's per-device local storage, not in `data.json`, so they do not travel with a copy of the vault folder.
-- File contents are on the server only in transit and are deleted after delivery.
-- With encryption on, file contents, content ids and file names are unreadable to Supabase. Sizes and times are not encrypted.
-- If you lose the encryption passphrase, the encrypted files on the server cannot be recovered. Your local files are not affected.
-- This plugin connects to the Supabase project you configure and to nothing else.
+## رفع مشکل
 
-## Limits
+| مشکل | کاری که انجام دهید |
+| --- | --- |
+| `main.js` در ZIP نیست | ZIP سورس گرفته‌اید؛ build کنید یا بستهٔ آمادهٔ Release را بگیرید |
+| «پایگاه داده آماده نیست» | `schema.sql` را در پروژهٔ درست اجرا و اتصال را دوباره آزمایش کنید |
+| ورود ناموفق است | حساب sync داخل همان پروژه، رمز و تأیید ایمیل را بررسی کنید؛ حساب داشبورد متفاوت است |
+| نصب خودکار وصل نمی‌شود | سرویس باید مستقر و تنظیم شده باشد؛ URL معتبر HTTPS و مجوز OAuth لازم است |
+| بازگشت مرورگر کار نمی‌کند | کد یک‌بارمصرف را در همان پنجرهٔ ویزارد وارد کنید؛ کد را به کسی ندهید |
+| پروژه آماده نیست | تا `ACTIVE_HEALTHY` شدن صبر کنید و پروژه‌ها را تازه‌سازی کنید |
+| جدول هم‌نام وجود دارد | یک پروژهٔ اختصاصی خالی استفاده کنید؛ روی جدول برنامهٔ دیگر نصب نکنید |
+| حساب قبلاً وجود دارد | رمز درستِ همان حساب را وارد کنید؛ نصب‌کننده رمز را reset نمی‌کند |
+| فایل‌ها «در راه» هستند | Obsidian را روی دستگاه قبلی هم باز کنید تا محتوا ارسال شود |
+| پروژه متوقف شده است | وضعیت پروژه را در Supabase بررسی و در صورت لزوم Restore کنید |
+| فایل بزرگ sync نمی‌شود | حد پلاگین، حد باکت و پلن خود را بررسی کنید؛ پیش‌فرض پلاگین ۵۰ MB است |
+| sync روی گوشی متوقف است | Obsidian را باز نگه دارید؛ فعالیت پس‌زمینهٔ موبایل محدود است |
+| نسخهٔ تعارض ساخته شده | دو نسخه را بازبینی کنید؛ قبل از پاک‌کردن، محتوای لازم را نگه دارید |
 
-- Hidden folders (`.obsidian`, `.trash`) are not synced, so settings, themes and plugins stay per device.
-- Files larger than the configured limit (default 50 MB, the free-tier maximum) are skipped and listed in the sync log.
-- Free Supabase projects pause after a week without activity. The plugin tells you when that happens; restore the project in the dashboard.
-- Keeping the vault in iCloud Drive *and* syncing it with this plugin is not recommended: two sync systems on one folder fight each other.
-- Because the server keeps no copies, a new device only fills up once one of your existing devices has run Obsidian after it joined. Phones only sync while Obsidian is open.
-- The server does not keep history: it is not a backup. Keep your own backups.
+گزارش sync از نوار وضعیت یا دستور **Open sync log / باز کردن گزارش همگام‌سازی** قابل مشاهده است. Reset sync state برای بازسازی مقایسه‌هاست؛ جایگزین بکاپ یا راه‌حل خودکار همهٔ مشکلات نیست.
 
-## Development
+## محدودیت‌ها
+
+- پوشه‌های مخفی مانند `.obsidian` و `.trash` sync نمی‌شوند؛ تنظیمات، پوسته و پلاگین‌ها per-device می‌مانند.
+- استفادهٔ هم‌زمان iCloud و Vault Sync روی همان پوشه توصیه نمی‌شود.
+- این سیستم تاریخچهٔ دائمی یا بکاپ سرور ارائه نمی‌کند.
+- برای پرشدن دستگاه جدید، ممکن است یکی از دستگاه‌های قبلی باید آنلاین و Obsidian آن باز باشد.
+- رفتار پلن، توقف پروژه و سقف فایل‌ها تابع Supabase و تنظیمات پروژهٔ خودتان است.
+- نتیجهٔ تست آفلاین، به‌تنهایی تأیید عملکرد واقعی روی همهٔ گوشی‌ها و نسخه‌های Obsidian نیست.
+
+## توسعه و مشارکت
+
+**نیازمندی: Node.js 22+**؛ SDK قفل‌شدهٔ Supabase همین حداقل را می‌خواهد.
 
 ```bash
-npm install
-npm test            # unit tests, two/three-device simulations, fuzzing, schema on PGlite, plugin load
-npm run build       # type-check and bundle main.js
-npm run dev         # rebuild on change
-npm run deploy      # install or update the Supabase backend (asks for project URL and access token)
+npm ci
+npm test                  # suite موجود sync/schema + تست‌های onboarding
+npm run test:onboarding   # تست آفلاین و type-check اجزای جدید نصب
+npm run build             # type-check و bundle پلاگین
+npm run dev               # rebuild هنگام تغییر سورس
+npm run preview:onboarding
 ```
 
-`npm test` runs entirely offline. To also run the backend contract and a two-device sync against a real project, use a throwaway project or user:
+۲۲ تست onboarding در زمان پیاده‌سازی محلی پاس شدند؛ این عدد ادعای موفقیت CI یا تست زنده نیست. نتیجهٔ suite کامل و آزمایش دسکتاپ/موبایل باید پیش از Release تأیید شود. workflowهای قدیمی هنوز Node 20 دارند و قبل از انتشار باید با حداقل Node 22 هماهنگ شوند.
 
-```bash
-VAULT_SYNC_SUPABASE_URL=https://xxxx.supabase.co \
-VAULT_SYNC_SUPABASE_KEY=<publishable key> \
-VAULT_SYNC_SUPABASE_EMAIL=test@example.com \
-VAULT_SYNC_SUPABASE_PASSWORD=... \
-npm run test:live
+برای تست زنده از **پروژه و کاربر آزمایشی** استفاده کنید. نام متغیرهای موردنیاز `test:live` عبارت‌اند از `VAULT_SYNC_SUPABASE_URL`، `VAULT_SYNC_SUPABASE_KEY`، `VAULT_SYNC_SUPABASE_EMAIL` و `VAULT_SYNC_SUPABASE_PASSWORD`؛ مقدارهای حساس را امن تزریق کنید، نه در سورس و issue.
+
+```text
+src/core/        planner، engine، merge، crypto و scheduler
+src/backend/     رابط بک‌اند و پیاده‌سازی Supabase
+src/obsidian/    فایل‌ها، state و storage دستگاه
+src/onboarding/  کلاینت موقت نصب و برگشت مرورگر
+src/ui/          تنظیمات و پنجره‌های پلاگین
+installer/       سرویس مستقل OAuth و آماده‌سازی بک‌اند
+supabase/        schema عمومی و نصب‌شدنی
+test/           تست‌های آفلاین و سناریوهای sync
 ```
 
-Layout:
+برای contribution، تغییرات را در شاخهٔ جدا و PR ارائه کنید؛ رفتار قابل بازتولید، نسخهٔ Obsidian/سیستم‌عامل و لاگ پالایش‌شده را همراه تست مرتبط بفرستید. مشکلات و درخواست‌ها در [Issues](https://github.com/Ali-Nourix/Valut-Sync/issues) ثبت شوند؛ credential یا فایل خصوصی نفرستید.
 
-- `src/core/`: the sync itself, with no Obsidian imports.
-  - `planner.ts`: the three-way decisions.
-  - `engine.ts`: the cycle.
-  - `merge.ts` and `diff3.ts`: merging.
-  - `crypto.ts`: encryption.
-  - `scheduler.ts`: when to sync.
-- `src/backend/`: the `RemoteBackend` interface, the Supabase implementation and an in-memory one for tests. A different storage service only needs another implementation of `RemoteBackend`.
-- `src/obsidian/`: the vault, state files and device storage on top of Obsidian's API.
-- `src/ui/` and `main.ts`: settings, dialogs, commands and the status bar.
-- `supabase/schema.sql`: the database setup.
+### چک‌لیست نگه‌دارنده پیش از انتشار
 
-### Releasing
-
-Same flow as TaskPro:
-
-1. Bump `version` in `manifest.json`, `package.json` and `package-lock.json`, and add the version to `versions.json`.
-2. Push a tag with exactly that version, without a `v` prefix.
-
-The `release` workflow then tests, builds and publishes `main.js`, `manifest.json`, `styles.css` and a zip.
+- [ ] suite کامل، build و تست واقعی [دسکتاپ/موبایل](docs/device-test-checklist.md) پاس شود.
+- [ ] workflowها از Node 22+ استفاده کنند و وضعیت CI واقعاً بررسی شود.
+- [ ] history، branches، tags، لاگ‌ها و artifactها از نظر secret و اطلاعات شخصی بازبینی شوند.
+- [ ] در صورت ارائهٔ نصب خودکار، OAuth، HTTPS، scope، لاگ و مرز اعتماد سرویس تست شوند.
+- [ ] نسخه در `manifest.json`، `package.json`، `package-lock.json` و `versions.json` هماهنگ شود.
+- [ ] tag دقیقاً برابر نسخه و **بدون پیشوند `v`** باشد؛ workflow انتشار، فایل‌های نصب را بسازد.
+- [ ] وجود و نصب‌پذیری `main.js`، `manifest.json`، `styles.css` و ZIP روی یک والت آزمایشی بررسی شود.
 
 ## License
 
-MIT
+[MIT](LICENSE) — استفاده، تغییر و مشارکت مطابق متن مجوز.
+
+<div align="center">
+
+Built for personal knowledge. Powered by **your** infrastructure.
+
+</div>
