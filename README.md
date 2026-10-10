@@ -2,6 +2,8 @@
 
 # Vault Sync
 
+[English](README.en.md) · [فارسی](README.md)
+
 **والت شما. Supabase شما. دستگاه‌های شما.**
 
 همگام‌سازی یادداشت‌ها و فایل‌های Obsidian بین گوشی و کامپیوتر، با پروژهٔ شخصی Supabase.
@@ -19,13 +21,13 @@
 
 ---
 
-> شاخهٔ `Release`> شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
+ > شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
 
 ## نصب پلاگین
 
 <a id="installation"></a>
 
-اگر بستهٔ آماده در [Releases](https://github.com/Ali-Nourix/Valut-Sync/releases) موجود است، سه فایل `main.js`، `manifest.json` و `styles.css` را از همان نسخه بگیرید و در این پوشهٔ والت قرار دهید:
+اگر بستهٔ آماده در [Releases](https://github.com/Ali-Nourix/Obsidian-Valut-Sync/releases) موجود است، سه فایل `main.js`، `manifest.json` و `styles.css` را از همان نسخه بگیرید و در این پوشهٔ والت قرار دهید:
 
 ```text
 <vault>/.obsidian/plugins/vault-sync/
