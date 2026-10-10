@@ -23,7 +23,7 @@ function fixture(opts={}){
   return reply({id:ref,name:'Fixture',status:opts.unhealthy?'COMING_UP':'ACTIVE_HEALTHY'});
  };
  const client=new DirectInstallerClient(pat,ref,transport);
- const input={projectRef:ref,confirmRef:ref,dedicatedProject:true,email:'fixture@example.invalid',password,accountMode:'create',closeSignups:false};
+ const input={projectRef:ref,confirmRef:ref,dedicatedProject:true,email:'fixture@example.invalid',password,accountMode:'create'};
  async function finish(){for(let i=0;i<100;i++){const s=await client.state();if(['complete','failed'].includes(s.status))return s;await new Promise(r=>setTimeout(r,1));}assert.fail('setup did not finish');}
  return {calls,client,input,finish,release};
 }
@@ -47,8 +47,8 @@ test('existing user is reused without reset; wrong password is safe',async()=>{
 test('permission preflight, collisions, newer schema and unhealthy project stop safely',async()=>{
  for(const options of [{deniedKeys:true},{collision:true},{future:true},{unhealthy:true}]){const f=fixture(options);await f.client.install(f.input);assert.equal((await f.finish()).status,'failed');assert.equal(f.calls.some(c=>c.data?.query?.includes('begin;')),false);assert.equal(f.client.pat,'');}
 });
-test('target confirmation, sign-up changes and concurrent installation rejected',async()=>{
- const f=fixture({pause:true});for(const extra of [{confirmRef:''},{projectRef:other,confirmRef:other},{dedicatedProject:false},{closeSignups:true}])await assert.rejects(()=>f.client.install({...f.input,...extra}),/invalid_install_confirmation/);
+test('target confirmation and concurrent installation rejected',async()=>{
+ const f=fixture({pause:true});for(const extra of [{confirmRef:''},{projectRef:other,confirmRef:other},{dedicatedProject:false}])await assert.rejects(()=>f.client.install({...f.input,...extra}),/invalid_install_confirmation/);
  await f.client.install(f.input);await assert.rejects(()=>f.client.install(f.input),/not_connected/);f.release();await f.finish();
 });
 test('cancellation during setup stops following mutations; completed schema is not rolled back',async()=>{

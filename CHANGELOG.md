@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — direct setup and release cleanup
+
+- Install on your own existing dedicated Supabase project with a short-lived, project-scoped PAT entered only in the local plugin wizard.
+- Keep the SQL Editor fallback and a static, credential-free setup guide.
+- Remove the retired OAuth/Cloudflare installer, browser callback, terminal deploy script, and their tests and duplicated guides.
+- Migrate the obsolete installer URL out of saved settings without resetting sync configuration.
+- Existing-user setup does not request administrative key secrets or reset passwords; project-wide sign-up settings are unchanged.
+- Live Supabase installation and desktop/mobile acceptance checks are still required before publication.
+
 ## 0.3.0 - Far fewer writes, on devices and on Supabase
 
 A sync with nothing to do now writes no file and makes one server call. Measured on a 300-note vault, five idle syncs went from 10 state-file rewrites and 20 server calls to 0 and 5.
@@ -18,7 +27,7 @@ A sync with nothing to do now writes no file and makes one server call. Measured
 - Calls that only read no longer lock the vault row, which is a database write even when nothing changes.
 - A device's "last seen" time is written at most once an hour.
 - Garbage collection runs once, shortly after something was delivered, plus a safety net every six hours, instead of every five minutes.
-- Schema version 3. Run `npm run deploy` again; it is backward compatible with 0.2.0 plugins.
+- Schema version 3, backward compatible with 0.2.0 plugins. For an existing installation, review and run `supabase/schema.sql` in that dedicated project’s SQL Editor.
 
 ## 0.2.0 - Supabase as a relay, not a store
 
@@ -32,7 +41,7 @@ A sync with nothing to do now writes no file and makes one server call. Measured
 
 ### Setup
 
-- `npm run deploy` installs or updates the backend on a Supabase project through the Management API, can create the sync account and close sign-ups, and prints the values for the plugin.
+- At that release, a terminal deploy helper installed the backend and optionally created the sync account. That helper was retired in the current Release branch; use the README’s direct or SQL setup instead.
 - Schema version 2; running it over a version 1 install upgrades it in place.
 
 ## 0.1.0 - First release

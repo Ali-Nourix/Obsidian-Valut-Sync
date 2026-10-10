@@ -10,8 +10,6 @@ export type Language = 'en' | 'fa';
 
 export interface VaultSyncSettings {
   language: Language;
-  /** Legacy optional OAuth URL, retained for settings compatibility; direct setup ignores it. */
-  installerUrl: string;
   /** Project URL, e.g. https://abcd.supabase.co */
   supabaseUrl: string;
   /** The publishable (anon) key. Never the secret / service-role key. */
@@ -35,7 +33,6 @@ export interface VaultSyncSettings {
 
 export const DEFAULT_SETTINGS: VaultSyncSettings = {
   language: 'en',
-  installerUrl: '',
   supabaseUrl: '',
   supabaseKey: '',
   email: '',

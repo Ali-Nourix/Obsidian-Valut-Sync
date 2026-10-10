@@ -62,7 +62,7 @@ export class DirectInstallerClient {
   async install(input: InstallInput): Promise<void> {
     this.alive();
     if (this.busy || !this.pat || this.current.status !== 'connected') throw new Error('not_connected');
-    if (input.projectRef !== this.ref || input.confirmRef !== this.ref || !input.dedicatedProject || input.closeSignups !== false
+    if (input.projectRef !== this.ref || input.confirmRef !== this.ref || !input.dedicatedProject
       || !['create','existing'].includes(input.accountMode) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) || input.email.length > 254
       || typeof input.password !== 'string' || input.password.length < 12 || input.password.length > 1024) throw new Error('invalid_install_confirmation');
     this.busy = true; this.current = {status:'installing',progress:[],error:null,result:null};

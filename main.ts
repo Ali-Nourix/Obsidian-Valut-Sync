@@ -6,7 +6,6 @@
 // the status bar, commands and settings. The sync logic is in src/core.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { deliverSetupReturn } from './src/onboarding/return-channel';
 import { validateSetupResult, SetupResult } from './src/onboarding/client';
 import { Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from 'obsidian';
 import { EncryptedPathBackend } from './src/backend/encrypted-paths';
@@ -82,7 +81,6 @@ export default class VaultSyncPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.registerObsidianProtocolHandler('vault-sync-setup', params => deliverSetupReturn(params));
     this.device = new DeviceStore(this.app);
     this.logFile = new JsonFile(this.app.vault.adapter, `${this.pluginDir}/state/log.json`);
     this.log.load((await this.logFile.load()) ?? []);
@@ -108,10 +106,16 @@ export default class VaultSyncPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // Retire the old hosted-setup setting without losing the user's connection.
+    const legacy = this.settings as unknown as Record<string, unknown>;
+    const hadInstallerUrl = Object.prototype.hasOwnProperty.call(legacy, 'installerUrl');
+    delete legacy.installerUrl;
     if (keyProblem(this.settings.supabaseKey) === 'secret') {
       this.settings.supabaseKey = '';
       await this.saveSettings();
       new Notice(this.labels.noticeSecretKey, 10_000);
+    } else if (hadInstallerUrl) {
+      await this.saveSettings();
     }
   }
 

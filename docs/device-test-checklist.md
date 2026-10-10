@@ -4,7 +4,7 @@ The automated tests cover the sync logic. This list covers what only a real devi
 
 ## Setup
 
-- [ ] Fresh install on desktop: the status bar shows "Sync: set up". No network requests until a URL and key are entered.
+- [ ] Fresh install on desktop: the status bar shows "Sync: set up". No network requests until manual connection is configured or the user explicitly approves and submits direct scoped-PAT setup.
 - [ ] A secret / service_role key is refused with an explanation.
 - [ ] "Test connection" before running `schema.sql` reports the missing schema. After running it, the test succeeds.
 - [ ] Create account → confirmation email → sign in. Signing in with a dashboard-created user also works.
@@ -14,6 +14,17 @@ The automated tests cover the sync logic. This list covers what only a real devi
   - [ ] the phone asks to unlock;
   - [ ] a wrong passphrase is refused;
   - [ ] "remember" survives a restart.
+
+## Direct setup
+
+- [ ] Create a throwaway dedicated project and a short-lived Scoped PAT limited to that project (never Legacy).
+- [ ] Only Project Settings: Read, Database: Read-write and API Keys: Read are needed for an existing sync account. API Key Secrets: Read is required only for automatic account creation.
+- [ ] Wrong project confirmation, insufficient permissions, conflicting tables and a newer schema stop setup safely.
+- [ ] Existing users are not password-reset, API keys are not rotated, and project-wide sign-up settings do not change.
+- [ ] Cancel, errors, expiry and success clear temporary credentials; PAT/admin key/password do not appear in settings, logs or files.
+- [ ] Requests go only to official Supabase APIs for the selected project, not a maintainer-hosted service.
+- [ ] Revoke the PAT in Supabase after installation. Connect a second device using the same public connection and account, without another PAT or schema install.
+- [ ] Upgrading from the old preview removes the saved installer URL and preserves the existing connection and vault.
 
 ## Everyday sync
 

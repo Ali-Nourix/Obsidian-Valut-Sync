@@ -1,7 +1,7 @@
 -- ── Vault Sync: Supabase schema (version 3) ─────────────────────────────────
--- Install with `npm run deploy`, or paste this whole file into the Supabase
--- dashboard → SQL Editor → Run. It is safe to run again, and it upgrades an
--- older install in place.
+-- Install through the plugin direct-setup wizard, or paste this whole file
+-- into your dedicated Supabase project → SQL Editor → Run. Review the target
+-- before applying: this creates or updates the Vault Sync schema in place.
 --
 -- Supabase is a relay, not a store: file contents stay in the bucket only
 -- until every other device has received them, then they are deleted. What

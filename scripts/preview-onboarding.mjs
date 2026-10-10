@@ -8,7 +8,7 @@ import { SupabaseSetupModal } from './src/ui/setup-modal';
 const ref='abcdefghijklmnopqrst';
 const result={projectRef:ref,projectUrl:'https://'+ref+'.supabase.co',publishableKey:'sb_publishable_demo_placeholder',email:'demo@example.invalid',account:'created'};
 const qs=new URLSearchParams(location.search), lang=qs.get('lang')==='en'?'en':'fa';
-const host={settings:{language:lang,installerUrl:''},async applySetupResult(){},async createVault(){},async chooseVault(){},async unlockVault(){return true},async listVaults(){return [{id:'demo-vault',name:'Demo vault',encryption:null,headSeq:0,headDevice:null}]}};
+const host={settings:{language:lang},async applySetupResult(){},async createVault(){},async chooseVault(){},async unlockVault(){return true},async listVaults(){return [{id:'demo-vault',name:'Demo vault',encryption:null,headSeq:0,headDevice:null}]}};
 const reply=(status,json)=>({status,json});
 globalThis.__demoAdapter.requestUrl=async ({url,method,body})=>{
  const path=new URL(url).pathname,data=body?JSON.parse(body):{};

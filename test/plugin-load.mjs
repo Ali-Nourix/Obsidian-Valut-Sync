@@ -36,6 +36,19 @@ globalThis.fetch = async () => {
 };
 const manifest = { id: 'vault-sync', dir: '.obsidian/plugins/vault-sync', version: '0.1.0' };
 
+// Legacy hosted setup is removed on load, with normal sync settings preserved.
+{
+  const plugin = new VaultSyncPlugin(new App(new Vault()), manifest);
+  plugin.saved = { installerUrl: 'https://unused.example.org', supabaseUrl: 'https://abcdefghijklmnopqrst.supabase.co', supabaseKey: 'sb_publishable_fixture', email: 'fixture@example.invalid', autoSync: false };
+  await plugin.loadSettings();
+  eq('installerUrl' in plugin.settings, false, 'legacy URL removed from memory');
+  eq('installerUrl' in plugin.saved, false, 'legacy URL removed from saved settings');
+  eq(plugin.settings.supabaseKey, 'sb_publishable_fixture', 'public key preserved');
+  eq(plugin.settings.email, 'fixture@example.invalid', 'account preserved');
+  eq(plugin.settings.autoSync, false, 'sync preference preserved');
+  eq(fetches, 0, 'migration is offline');
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 {
   const app = new App(new Vault());

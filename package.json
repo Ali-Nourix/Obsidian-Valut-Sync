@@ -7,13 +7,11 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "node test/paths.mjs && node test/merge.mjs && node test/crypto.mjs && node test/planner.mjs && node test/scheduler.mjs && node test/sync-sim.mjs && node test/sync-fuzz.mjs && node test/backend-contract.mjs && node test/schema-pglite.mjs && node test/plugin-load.mjs && npm run test:onboarding",
     "test:live": "node test/backend-contract.mjs",
-    "deploy": "node scripts/deploy.mjs",
-    "test:onboarding": "node --test test/installer.mjs test/onboarding.mjs test/direct-installer.mjs && tsc --noEmit --skipLibCheck --target es2018 --module esnext --moduleResolution node --lib DOM,ES2018 src/onboarding/client.ts src/onboarding/direct-installer.ts src/onboarding/return-channel.ts src/ui/setup-modal.ts",
-    "installer": "node installer/server.mjs",
+    "test:onboarding": "node --test test/onboarding.mjs test/direct-installer.mjs && tsc --noEmit --skipLibCheck --target es2018 --module esnext --moduleResolution node --lib DOM,ES2018 src/onboarding/client.ts src/onboarding/direct-installer.ts src/ui/setup-modal.ts",
     "preview:onboarding": "node scripts/preview-onboarding.mjs",
     "prebuild": "node scripts/bundle-setup-schema.mjs"
   },
-  "description": "Vault Sync \u2014 keep an Obsidian vault in sync between devices through Supabase.",
+  "description": "Vault Sync — keep an Obsidian vault in sync between devices through Supabase.",
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2"

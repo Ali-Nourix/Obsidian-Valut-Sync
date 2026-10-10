@@ -4,7 +4,7 @@ import { DirectInstallerClient, TOKEN_SETTINGS_URL } from '../onboarding/direct-
 import type { RemoteVault } from '../backend/remote-backend';
 
 interface SetupHost {
-  settings: { language: 'en' | 'fa'; installerUrl: string };
+  settings: { language: 'en' | 'fa' };
   applySetupResult(result: SetupResult, password: string): Promise<void>;
   createVault(name: string, passphrase: string | null, remember: boolean): Promise<void>;
   listVaults(): Promise<RemoteVault[]>;
@@ -59,7 +59,7 @@ export class SupabaseSetupModal extends Modal {
       conflicting_tables: ['This project has conflicting tables. Use a dedicated empty project.', 'این پروژه جدول‌های هم‌نام دارد؛ یک پروژهٔ اختصاصی خالی انتخاب کنید.'],
       project_not_ready: ['Project is not ACTIVE_HEALTHY yet. Wait and reconnect.', 'پروژه هنوز ACTIVE_HEALTHY نیست؛ صبر کنید و دوباره متصل شوید.'],
       session_expired: ['Connection expired. Start a new connection.', 'اتصال منقضی شد؛ اتصال جدید بسازید.'],
-      trusted_installer_required: ['Approve direct setup with your scoped token first.', 'ابتدا نصب مستقیم با توکن محدود خودتان را تأیید کنید.'],
+      local_setup_approval_required: ['Approve direct setup with your scoped token first.', 'ابتدا نصب مستقیم با توکن محدود خودتان را تأیید کنید.'],
       scoped_pat_required: ['Use a project-scoped PAT (sbp_fc), not a Legacy token or a project API key.', 'توکن محدود به پروژه با پیشوند sbp_fc وارد کنید؛ نه Legacy و نه کلید API پروژه.'],
       invalid_project_ref: ['Enter your 20-character project ref, not the project name.', 'شناسهٔ ۲۰ کاراکتری پروژه را وارد کنید، نه نام پروژه.'],
       authorization_expired: ['The token is expired or revoked. Create a short-lived scoped token and reconnect.', 'توکن منقضی یا لغو شده؛ توکن محدود و کوتاه‌عمر جدید بسازید.'],
@@ -105,7 +105,7 @@ export class SupabaseSetupModal extends Modal {
       this.toggle(this.t('I trust this plugin with temporary administration of this project', 'به پلاگین برای مدیریت موقت همین پروژه اعتماد دارم'), this.trustLocalSetup, v => { this.trustLocalSetup = v; });
       el.createEl('p', { text: this.t('The token and admin key are not saved to settings or logs. After setup, revoke the token in Supabase. Clearing it here is not revocation.', 'توکن و کلید مدیریتی در تنظیمات یا لاگ ذخیره نمی‌شوند. بعد از نصب، توکن را در Supabase لغو کنید؛ پاک‌شدن از حافظه به‌معنای لغو توکن نیست.') });
       this.button(this.t('Connect Supabase', 'اتصال به Supabase'), async () => {
-        if (!this.trustLocalSetup) throw new Error('trusted_installer_required');
+        if (!this.trustLocalSetup) throw new Error('local_setup_approval_required');
         await this.client?.close();
         const pat = this.pat; this.pat = '';
         this.client = new DirectInstallerClient(pat, this.setupRef, async (target, method, headers, body) => {
@@ -144,7 +144,7 @@ export class SupabaseSetupModal extends Modal {
         if (this.confirmRef !== this.selected || !this.dedicated) throw new Error('confirm_dedicated_project');
         if (this.password.length < 12 || this.password !== this.passwordAgain) throw new Error('password_mismatch_or_short');
         await this.client!.install({ projectRef: this.selected, confirmRef: this.confirmRef, dedicatedProject: this.dedicated,
-          email: this.email, password: this.password, accountMode: this.accountMode, closeSignups: false });
+          email: this.email, password: this.password, accountMode: this.accountMode });
         this.phase = 'installing'; this.progress = 'starting'; this.schedulePoll();
       }, true);
     } else if (this.phase === 'installing') {
