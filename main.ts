@@ -6,6 +6,7 @@
 // the status bar, commands and settings. The sync logic is in src/core.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { validateSetupResult, SetupResult } from './src/onboarding/client';
 import { Notice, Platform, Plugin, setIcon, TAbstractFile, TFile, TFolder } from 'obsidian';
 import { EncryptedPathBackend } from './src/backend/encrypted-paths';
 import { BackendError, RemoteBackend, RemoteVault } from './src/backend/remote-backend';
@@ -105,6 +106,17 @@ export default class VaultSyncPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // Retire the old hosted-setup setting without losing the user's connection.
+    const legacy = this.settings as unknown as Record<string, unknown>;
+    const hadInstallerUrl = Object.prototype.hasOwnProperty.call(legacy, 'installerUrl');
+    delete legacy.installerUrl;
+    if (keyProblem(this.settings.supabaseKey) === 'secret') {
+      this.settings.supabaseKey = '';
+      await this.saveSettings();
+      new Notice(this.labels.noticeSecretKey, 10_000);
+    } else if (hadInstallerUrl) {
+      await this.saveSettings();
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -420,6 +432,22 @@ export default class VaultSyncPlugin extends Plugin {
   }
 
   // ── Account and vault actions (used by the settings tab) ────────────────
+
+  /** Only public configuration is persisted; password is used for a local sign-in. */
+  async applySetupResult(value: SetupResult, password: string): Promise<void> {
+    const result = validateSetupResult(value);
+    await this.closeVault();
+    this.sessionMaster = null;
+    this.settings.supabaseUrl = result.projectUrl;
+    this.settings.supabaseKey = result.publishableKey;
+    this.settings.email = result.email;
+    this.settings.vaultId = null;
+    this.settings.vaultName = '';
+    this.settings.vaultEncryption = null;
+    await this.saveSettings();
+    await this.reconnect();
+    await this.signIn(result.email, password);
+  }
 
   async testConnection(): Promise<void> {
     await this.reconnect();

@@ -285,3 +285,6 @@ export class Setting {
     return inert;
   }
 }
+
+/** Setup must never reach the real network in the plugin-load harness. */
+export async function requestUrl() { throw new Error("Unexpected setup network request"); }

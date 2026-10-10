@@ -44,7 +44,7 @@ export type KeyProblem = 'empty' | 'secret' | null;
 export function keyProblem(key: string): KeyProblem {
   const value = key.trim();
   if (!value) return 'empty';
-  if (value.startsWith('sb_secret_') || jwtRole(value) === 'service_role') return 'secret';
+  if (value.startsWith('sb_secret_') || value.startsWith('sbp_') || jwtRole(value) === 'service_role') return 'secret';
   return null;
 }
 
@@ -55,7 +55,7 @@ export class SupabaseConnection {
     this.client = createClient(url, key.trim(), {
       auth: {
         storage,
-        storageKey: 'vault-sync-auth',
+        storageKey: `vault-sync-auth:${new URL(url).origin}`,
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,

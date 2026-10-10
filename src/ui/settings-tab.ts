@@ -7,6 +7,8 @@
 import { App, Notice, PluginSettingTab, Setting, setIcon } from 'obsidian';
 import type VaultSyncPlugin from '../../main';
 import { RemoteVault } from '../backend/remote-backend';
+import { keyProblem } from '../backend/supabase-client';
+import { SupabaseSetupModal } from './setup-modal';
 import { normalizeFolder } from '../core/paths';
 import { timeAgo } from '../localization/labels';
 import { Language } from '../types';
@@ -77,6 +79,13 @@ export class VaultSyncSettingTab extends PluginSettingTab {
         })
     );
 
+    const fa = settings.language === 'fa';
+    // Setup runs on-device; no installer URL, OAuth app or maintainer server.
+    new Setting(containerEl).setName(fa ? 'نصب مستقیم با توکن محدود خودتان' : 'Direct setup with your scoped token')
+      .setDesc(fa ? 'بدون سرور واسط. توکن فقط در پنجرهٔ نصب استفاده می‌شود؛ بعداً آن را لغو کنید.' : 'No intermediary server. Your token is used only in the setup window; revoke it afterwards.')
+      .addButton(button => button.setButtonText(fa ? 'راه‌اندازی خودکار Supabase' : 'Set up Supabase automatically').setCta()
+        .onClick(() => new SupabaseSetupModal(this.app, plugin, () => { this.vaults = null; this.display(); }).open()));
+
     // ── Supabase project ────────────────────────────────────────────────────
     this.section(containerEl, 'database', l.secConnection, l.secConnectionDesc);
     new Setting(containerEl).setName(l.setUrl).setDesc(l.setUrlDesc).addText((text) =>
@@ -92,6 +101,11 @@ export class VaultSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName(l.setKey).setDesc(l.setKeyDesc).addText((text) => {
       text.inputEl.type = 'password';
       text.setValue(settings.supabaseKey).onChange(async (value) => {
+        if (keyProblem(value) === 'secret') {
+          text.setValue(settings.supabaseKey);
+          new Notice(l.noticeSecretKey, 10_000);
+          return;
+        }
         settings.supabaseKey = value.trim();
         await plugin.saveSettings();
         this.reconnectSoon();
