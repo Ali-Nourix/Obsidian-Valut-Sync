@@ -82,3 +82,23 @@ test('direct setup sends no request before local approval and never uses a hoste
   assert.equal(modal.client, null);
   modal.onClose();
 });
+
+test('new setup defaults to automatic user creation and applies only public config after completion', async () => {
+  globalThis.window ??= globalThis;
+  const host = fakeHost(); const applied = []; const installed = [];
+  host.applySetupResult = async (config, password) => { applied.push({ config, password }); };
+  const modal = new SupabaseSetupModal({}, host, () => {});
+  modal.onOpen(); modal.phase = 'confirm'; modal.selected = ref; modal.confirmRef = ref; modal.dedicated = true;
+  modal.projects = [{ ref, name: 'Fixture', status: 'ACTIVE_HEALTHY' }];
+  modal.email = result.email; modal.password = 'fixture-password-123'; modal.passwordAgain = modal.password;
+  modal.client = { async install(input) { installed.push({ ...input }); }, async state() { return { status: 'complete', progress: [], result }; }, async close() {} };
+  modal.render();
+  const account = modal.contentEl.controls.find(c => c.name === 'حساب sync');
+  assert.equal(account.value, 'create'); assert.equal(account.options.create, 'ساخت خودکار حساب sync');
+  modal.contentEl.controls.find(c => c.label === 'راه‌اندازی Vault Sync').click();
+  for (let i = 0; i < 20 && modal.phase !== 'installing'; i++) await new Promise(r => setTimeout(r, 0));
+  assert.equal(installed.length, 1); assert.equal(installed[0].accountMode, 'create');
+  await modal.pollState();
+  assert.equal(modal.phase, 'vault'); assert.deepEqual(applied, [{ config: result, password: 'fixture-password-123' }]);
+  assert.equal(modal.password, ''); assert.equal(modal.pat, ''); modal.onClose();
+});

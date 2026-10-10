@@ -63,6 +63,8 @@ export class SupabaseSetupModal extends Modal {
       scoped_pat_required: ['Use a project-scoped PAT (sbp_fc), not a Legacy token or a project API key.', 'توکن محدود به پروژه با پیشوند sbp_fc وارد کنید؛ نه Legacy و نه کلید API پروژه.'],
       invalid_project_ref: ['Enter your 20-character project ref, not the project name.', 'شناسهٔ ۲۰ کاراکتری پروژه را وارد کنید، نه نام پروژه.'],
       authorization_expired: ['The token is expired or revoked. Create a short-lived scoped token and reconnect.', 'توکن منقضی یا لغو شده؛ توکن محدود و کوتاه‌عمر جدید بسازید.'],
+      admin_key_missing: ['Automatic account creation needs API Keys: Read and API Key Secrets: Read on this project. Reconnect with those permissions.', 'برای ساخت خودکار حساب، API Keys: Read و API Key Secrets: Read همین پروژه لازم است؛ با این مجوزها دوباره متصل شوید.'],
+      account_creation_failed: ['The sync account could not be created. Check the email and project password requirements, then retry.', 'حساب sync ساخته نشد؛ ایمیل و شرایط رمز پروژه را بررسی و دوباره امتحان کنید.'],
       supabase_unreachable: ['Cannot reach Supabase. Check your connection.', 'اتصال به Supabase ممکن نیست؛ شبکه را بررسی کنید.'],
     };
     const label = messages[code]; return label ? this.t(label[0], label[1]) : code;
@@ -134,7 +136,8 @@ export class SupabaseSetupModal extends Modal {
       el.createEl('p', { text: this.t('This installs tables, private storage and Realtime, and replaces this device’s current connection. It does not change existing account passwords.', 'جدول‌ها، فضای خصوصی و Realtime نصب و اتصال فعلی این دستگاه جایگزین می‌شود. رمز حساب‌های موجود تغییر نمی‌کند.') });
       this.text(this.t('Type the project ref to confirm', 'شناسهٔ پروژه را برای تأیید بنویسید'), this.confirmRef, v => { this.confirmRef = v.trim(); });
       this.toggle(this.t('This is my dedicated Vault Sync project', 'این پروژهٔ اختصاصی Vault Sync من است'), this.dedicated, v => { this.dedicated = v; });
-      new Setting(el).setName(this.t('Sync account', 'حساب sync')).addDropdown(d => d.addOptions({ create: this.t('Create account (or use existing)', 'ساخت حساب (یا استفاده از حساب موجود)'), existing: this.t('Use existing account', 'استفاده از حساب موجود') }).setValue(this.accountMode).onChange(v => { this.accountMode = v as 'create' | 'existing'; }));
+      new Setting(el).setName(this.t('Sync account', 'حساب sync')).addDropdown(d => d.addOptions({ create: this.t('Create sync account automatically', 'ساخت خودکار حساب sync'), existing: this.t('Use existing account', 'استفاده از حساب موجود') }).setValue(this.accountMode).onChange(v => { this.accountMode = v as 'create' | 'existing'; }));
+      el.createEl('p', { text: this.t('For a new setup, keep automatic account creation selected and choose an email and a separate sync password below. The plugin creates and confirms this user in your project; no manual Add user is needed. If this email already exists, its current password is required and is never reset.', 'برای نصب جدید، ساخت خودکار را انتخاب کنید و پایین ایمیل و رمز مستقل حساب sync را تعیین کنید. پلاگین کاربر را در پروژهٔ شما می‌سازد و تأیید می‌کند؛ Add user دستی لازم نیست. اگر این ایمیل از قبل وجود دارد، رمز فعلی آن لازم است و تغییر نمی‌کند.') });
       this.text(this.t('Sync email', 'ایمیل حساب sync'), this.email, v => { this.email = v.trim(); });
       this.text(this.t('Sync password (12+ characters; not your dashboard password)', 'رمز حساب sync (حداقل ۱۲ کاراکتر؛ نه رمز داشبورد)'), this.password, v => { this.password = v; }, true);
       this.text(this.t('Repeat sync password', 'تکرار رمز sync'), this.passwordAgain, v => { this.passwordAgain = v; }, true);

@@ -34,6 +34,8 @@ test('only scoped PAT format accepted, with a dedicated project ref',()=>{
 });
 test('full direct setup touches only selected Supabase project and returns public config',async()=>{
  const f=fixture();assert.equal((await f.client.projects())[0].ref,ref);await f.client.install(f.input);const s=await f.finish();assert.equal(s.status,'complete');assert.equal(s.result.account,'created');
+ const creation=f.calls.filter(c=>new URL(c.url).pathname==='/auth/v1/admin/users');assert.equal(creation.length,1);assert.equal(creation[0].method,'POST');assert.deepEqual(creation[0].data,{email:f.input.email,password,email_confirm:true});assert.equal(creation[0].headers.apikey,admin);assert.equal(creation[0].headers.Authorization,`Bearer ${admin}`);
+ assert.ok(f.calls.some(c=>c.url.includes('/api-keys?reveal=true')));
  for(const secret of [pat,admin,password,'fixture-verification-session'])assert.equal(JSON.stringify(s).includes(secret),false);
  for(const c of f.calls){assert.ok(['https://api.supabase.com',`https://${ref}.supabase.co`].includes(new URL(c.url).origin));assert.equal(c.url.includes(pat),false);if(new URL(c.url).origin==='https://api.supabase.com')assert.equal(c.headers.Authorization,`Bearer ${pat}`);}
  assert.equal(f.calls.some(c=>new URL(c.url).pathname==='/v1/projects'),false);assert.equal(f.calls.some(c=>c.url.includes('/config/auth')),false);assert.equal(f.client.pat,'');
