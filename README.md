@@ -25,7 +25,7 @@
 
 ---
 
-> شاخهٔ `Release` هنوز پیش از انتشار عمومی است. نصب زنده و تست واقعی دسکتاپ/موبایل باید تکمیل شود؛ فعلاً برای امتحان این شاخه، سورس را build کنید.
+> برای ساخت سورس از شاخهٔ `main` استفاده کنید؛ شاخهٔ قدیمی `Release` در فهرست فعلی شاخه‌ها وجود ندارد. نصب زنده و تست واقعی دسکتاپ/موبایل همچنان باید جداگانه تأیید شوند.
 
 ## از اینجا شروع کنید
 
@@ -52,7 +52,7 @@
 **برای build شاخهٔ فعلی**، Node.js **22+** لازم است:
 
 ```bash
-git clone --branch Release https://github.com/Ali-Nourix/Obsidian-Valut-Sync.git
+git clone --branch main https://github.com/Ali-Nourix/Obsidian-Valut-Sync.git
 cd Obsidian-Valut-Sync
 npm ci
 npm run build
